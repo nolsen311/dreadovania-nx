@@ -30,7 +30,7 @@ Items marked **(verify)** are open questions.
 
 ## Reusing SimpleModManager
 
-- **To verify:** its license (expected GPL-3.0, compatible with this repo), how
+- **To verify:** its license (expected GPL-3.0; this repo is GPL-3.0-or-later, so GPL-3.0-only code would make the combined app GPL-3.0-only), how
   cleanly its mod apply/remove logic separates from its UI, and whether its UI
   framework (Borealis) suits us.
 - **Options:**
@@ -44,7 +44,9 @@ Items marked **(verify)** are open questions.
 - Build in the devkitPro container image, **pinned by digest**.
 - Every action pinned to a full SHA, with `permissions: {}` at the top level and
   permissions granted per job.
-- Protection on `main` via [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json).
+- Protection on `main` via [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json),
+  and admin-only release tags via `protect-release-tags.json`, both applied by `scripts/bootstrap.sh`.
+- DCO sign-off model and Claude working rules from `claude-project-template` (ADR 0002).
 - Dependabot for Actions, Docker digests and submodules.
 - Releases built from tags only, on GitHub-hosted runners: `.nro` plus SHA-256 checksums
   plus a build-provenance attestation (`actions/attest-build-provenance`).
