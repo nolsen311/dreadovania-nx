@@ -1,0 +1,15 @@
+# Dependency updates. Every update arrives as a PR and must pass CI.
+# The cooldown waits a week after a release before proposing it, which gives
+# the ecosystem time to catch a compromised or broken release.
+# Add an entry for each language ecosystem the project uses.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

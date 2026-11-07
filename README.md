@@ -15,6 +15,16 @@ generate seeds, download them, and swap them in and out with one action.
 - Seed library compatible with SimpleModManager.
 - (Later) Back up and swap save data per seed.
 
+## How this project is built
+
+This project is written by [Claude](https://claude.ai/code), Anthropic's AI
+coding assistant, under the oversight of its maintainer
+([@nolsen311](https://github.com/nolsen311)). Every change goes through a pull
+request that the maintainer reviews, signs off under the
+[Developer Certificate of Origin](CONTRIBUTING.md#developer-certificate-of-origin),
+and merges. Claude never merges, never tags releases, and never signs off on
+anyone's behalf. See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CLAUDE.md`](CLAUDE.md).
+
 ## What this project does *not* do
 
 Patching happens on your server, using game files **you supply yourself** from
@@ -26,4 +36,4 @@ by Nintendo or the Randovania team. All trademarks belong to their owners.
 
 ## License
 
-[GPL-3.0](LICENSE).
+[GPL-3.0-or-later](LICENSE).
