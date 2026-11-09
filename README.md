@@ -5,7 +5,8 @@ randomizer seeds. It connects to a
 [Dreadovania Server](https://github.com/nolsen311/dreadovania-server) to
 generate seeds, download them, and swap them in and out with one action.
 
-> **Status:** planning. Nothing here is buildable yet. See [`docs/PLAN.md`](docs/PLAN.md).
+> **Status:** early. The app builds and starts; pairing and seeds come next.
+> See [`docs/PLAN.md`](docs/PLAN.md) and [ADR 0004](docs/adr/0004-phase4-plan.md).
 
 ## Planned features
 
@@ -14,6 +15,32 @@ generate seeds, download them, and swap them in and out with one action.
 - Download a seed's mod and install or swap it, showing which seed is active.
 - Installs seeds the same way as the server's "Send to Switch", so the two can be mixed.
 - (Later) Back up and swap save data per seed.
+
+## Building
+
+The app is built with devkitPro's libnx in its container image, pinned by
+digest in [`.github/workflows/build.yml`](.github/workflows/build.yml). From
+the repository folder:
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/src -w /src devkitpro/devkita64@sha256:1fc388c3a0d34bd2045a6dadcb1020e069d5f876a187fd705de14b4440c00282 make
+```
+
+That writes `dreadovania.nro`: copy it to `/switch/` on the SD card and open it
+from the Homebrew Menu.
+
+The code that doesn't need a Switch (under `core/`) is unit-tested on your
+computer with CMake and a C++20 compiler:
+
+```bash
+cmake -S tests -B build-host && cmake --build build-host && ctest --test-dir build-host
+```
+
+## Credits
+
+[SimpleModManager](https://github.com/nadrino/SimpleModManager) by nadrino
+inspired the idea of keeping a library of mods on the Switch. Dreadovania uses
+none of its code (ADR 0004).
 
 ## How this project is built
 
