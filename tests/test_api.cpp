@@ -93,3 +93,24 @@ TEST(problem_details) {
     CHECK(problem_detail(R"({"title": "Not found"})") == "Not found");
     CHECK(!problem_detail("<html>"));
 }
+
+TEST(user_ca_files) {
+    CHECK(classify_user_ca("", false) == UserCa::Missing);
+    CHECK(classify_user_ca("-----BEGIN CERTIFICATE-----\nMIIF...", true) == UserCa::Loaded);
+    CHECK(classify_user_ca("\x30\x82\x05\xca binary DER", true) == UserCa::NotPem);
+}
+
+TEST(untrusted_certificate_messages_say_what_to_check) {
+    std::string loaded = untrusted_certificate_message(
+        "The certificate validity starts in the future", UserCa::Loaded, "2026-11-09 22:10");
+    CHECK(loaded.find("(The certificate validity starts in the future)") != std::string::npos);
+    CHECK(loaded.find("Your CA from /config/dreadovania/ca.pem was used") != std::string::npos);
+    CHECK(loaded.find("it says 2026-11-09 22:10 UTC") != std::string::npos);
+    std::string missing = untrusted_certificate_message("", UserCa::Missing, "");
+    CHECK(missing.find("copy its certificate to /config/dreadovania/ca.pem") !=
+          std::string::npos);
+    CHECK(missing.find("()") == std::string::npos);
+    CHECK(missing.find("it says") == std::string::npos);
+    CHECK(untrusted_certificate_message("x", UserCa::NotPem, "t").find("isn't a PEM") !=
+          std::string::npos);
+}

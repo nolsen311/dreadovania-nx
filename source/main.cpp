@@ -260,6 +260,16 @@ class App {
             printf("1. On your server, open Account > Switch app > Pair a Switch.\n");
             printf("2. Press A here, then enter the server's address and the code.\n\n");
             printf("The server must use HTTPS (see its docs/https.md).\n");
+            switch (http_.user_ca()) {
+                case dreadovania::UserCa::Loaded:
+                    printf("Your own CA (/config/dreadovania/ca.pem) is trusted too.\n");
+                    break;
+                case dreadovania::UserCa::NotPem:
+                    printf("/config/dreadovania/ca.pem isn't a PEM certificate: ignored.\n");
+                    break;
+                case dreadovania::UserCa::Missing:
+                    break;
+            }
         } else {
             printf("Server: %s\n\n", config_->server.c_str());
             if (loaded_ && seeds_.empty()) {

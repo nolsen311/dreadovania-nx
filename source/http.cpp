@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 
@@ -47,10 +48,22 @@ size_t on_data(char* data, size_t size, size_t count, void* user) {
     return n;
 }
 
-std::string describe(CURLcode code) {
+std::string switch_time_utc() {
+    std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    if (gmtime_r(&now, &utc) == nullptr) {
+        return "";
+    }
+    char text[32];
+    std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &utc);
+    return text;
+}
+
+std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca) {
     switch (code) {
         case CURLE_COULDNT_RESOLVE_HOST:
-            return "the server's name couldn't be found: check the address and Wi-Fi";
+            return "the server's name couldn't be found: check the address, and that the "
+                   "Switch uses your network's DNS (not 90DNS or another custom DNS)";
         case CURLE_COULDNT_CONNECT:
             return "the server didn't accept the connection: is it running, and is the "
                    "address right?";
@@ -58,13 +71,13 @@ std::string describe(CURLcode code) {
             return "the server took too long to answer";
         case CURLE_PEER_FAILED_VERIFICATION:
         case CURLE_SSL_CACERT_BADFILE:
-            return "the server's certificate isn't trusted. Use a certificate from a public "
-                   "authority (see the server's docs/https.md), or put your own CA's "
-                   "certificate at /config/dreadovania/ca.pem";
+            return dreadovania::untrusted_certificate_message(detail, ca, switch_time_utc());
         case CURLE_SSL_CONNECT_ERROR:
-            return "the secure connection failed: the server must offer TLS 1.2 or newer";
+            return std::string("the secure connection failed (") + detail +
+                   "): the server must offer TLS 1.2 or newer";
         default:
-            return std::string("the request failed (") + curl_easy_strerror(code) + ")";
+            return std::string("the request failed (") +
+                   (detail[0] != '\0' ? detail : curl_easy_strerror(code)) + ")";
     }
 }
 
@@ -84,7 +97,9 @@ std::string Http::init() {
         return "the app's trusted certificates are missing: reinstall the app";
     }
     std::string user_ca;
-    if (read_file(kUserCa, user_ca)) {
+    bool has_user_ca = read_file(kUserCa, user_ca);
+    user_ca_ = dreadovania::classify_user_ca(user_ca, has_user_ca);
+    if (user_ca_ == dreadovania::UserCa::Loaded) {
         roots += "\n" + user_ca;
     }
     // libcurl 7.69 can only read trusted roots from a file, so combine them.
@@ -147,6 +162,8 @@ Response Http::request(std::string_view method, const std::string& url, const st
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    char detail[CURL_ERROR_SIZE] = {};
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, detail);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
     if (!body.empty()) {
@@ -160,7 +177,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
     } else if (sink.too_big) {
         response.error = "the server's answer was too large";
     } else {
-        response.error = describe(code);
+        response.error = describe(code, detail, user_ca_);
     }
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);

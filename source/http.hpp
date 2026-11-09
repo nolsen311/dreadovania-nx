@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include "dreadovania/api.hpp"
+
 namespace app {
 
 struct Response {
@@ -21,6 +23,7 @@ class Http {
     // Prepares networking and the trusted roots. Returns an error, or "".
     std::string init();
     void shutdown();
+    dreadovania::UserCa user_ca() const { return user_ca_; }
 
     Response request(std::string_view method, const std::string& url,
                      const std::string& body = "", const std::string& token = "");
@@ -28,6 +31,7 @@ class Http {
   private:
     bool ready_ = false;
     std::string ca_file_;
+    dreadovania::UserCa user_ca_ = dreadovania::UserCa::Missing;
 };
 
 }  // namespace app
