@@ -1,0 +1,58 @@
+name: Build
+
+# Builds the .nro in the pinned devkitPro container and runs the core's unit
+# tests on the runner (ADR 0004). No secrets, read-only.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Core unit tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and run (AddressSanitizer, UBSan)
+        run: |
+          cmake -S tests -B build-host -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-host -j "$(nproc)"
+          ctest --test-dir build-host --output-on-failure
+
+  nro:
+    name: Switch build (.nro)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    # devkitpro/devkita64:20260219, pinned by digest (checked against the
+    # registry and Docker Hub's tag list).
+    container: devkitpro/devkita64@sha256:1fc388c3a0d34bd2045a6dadcb1020e069d5f876a187fd705de14b4440c00282
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        run: make -j "$(nproc)"
+      - name: Checksum
+        run: sha256sum dreadovania.nro | tee dreadovania.nro.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dreadovania-nro
+          path: |
+            dreadovania.nro
+            dreadovania.nro.sha256
+          if-no-files-found: error
+          retention-days: 14
