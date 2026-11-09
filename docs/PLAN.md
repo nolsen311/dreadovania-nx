@@ -4,7 +4,7 @@ Status: accepted (2026-11-07). This is **Phase 4** of the overall plan. The
 server-side plan and decision records live in
 [`dreadovania-server/docs`](https://github.com/nolsen311/dreadovania-server/tree/main/docs);
 see in particular ADRs 0004 (auth), 0006 (Switch delivery) and 0007 (separate repo).
-Items marked **(verify)** are open questions.
+Items marked **(verify)** are open questions; [ADR 0004](adr/0004-phase4-plan.md) settles them.
 
 ## Scope
 

@@ -9,3 +9,4 @@ supersedes the old one; don't rewrite history.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-claude-authorship-and-dco.md) | Claude authorship, maintainer sign-off (DCO) | Accepted |
 | [0003](0003-signoff-by-comment.md) | Sign off and merge with a `/signoff` comment | Accepted |
+| [0004](0004-phase4-plan.md) | Phase 4 plan: what the app is built from and how it installs seeds | Proposed |
