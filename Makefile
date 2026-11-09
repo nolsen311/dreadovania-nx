@@ -19,6 +19,7 @@ TARGET      := dreadovania
 BUILD       := build
 SOURCES     := source core/src
 DATA        :=
+ROMFS       := romfs
 INCLUDES    := core/include
 ICON        := icon.jpg
 APP_TITLE   := Dreadovania
@@ -35,7 +36,7 @@ CFLAGS   += $(INCLUDE) -D__SWITCH__
 CXXFLAGS := $(CFLAGS) -std=gnu++20 -fno-rtti -fno-exceptions
 ASFLAGS  := -g $(ARCH)
 LDFLAGS   = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LIBS     := -lnx
+LIBS     := -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx
 LIBDIRS  := $(PORTLIBS) $(LIBNX)
 
 #---------------------------------------------------------------------------------
@@ -55,7 +56,7 @@ export INCLUDE     := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                       $(foreach dir,$(LIBDIRS),-isystem $(dir)/include) -I$(CURDIR)/$(BUILD)
 export LIBPATHS    := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 export APP_ICON    := $(TOPDIR)/$(ICON)
-export NROFLAGS    += --icon=$(APP_ICON) --nacp=$(CURDIR)/$(TARGET).nacp
+export NROFLAGS    += --icon=$(APP_ICON) --nacp=$(CURDIR)/$(TARGET).nacp --romfsdir=$(CURDIR)/$(ROMFS)
 
 .PHONY: $(BUILD) clean all
 
