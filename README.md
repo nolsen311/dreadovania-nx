@@ -12,7 +12,7 @@ generate seeds, download them, and swap them in and out with one action.
 - Pair with your server once, using a short code. No typing passwords on the Switch.
 - Browse your seeds, or generate a new one from a preset.
 - Download a seed's mod and install or swap it, showing which seed is active.
-- Seed library compatible with SimpleModManager.
+- Installs seeds the same way as the server's "Send to Switch", so the two can be mixed.
 - (Later) Back up and swap save data per seed.
 
 ## How this project is built
