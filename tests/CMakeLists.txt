@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../VERSION DREADOVANIA_VERSION LIMIT_COUNT 1)
 
-add_library(dreadovania_core STATIC ../core/src/paths.cpp)
+add_library(dreadovania_core STATIC ../core/src/paths.cpp ../core/src/json.cpp ../core/src/api.cpp)
 target_include_directories(dreadovania_core PUBLIC ../core/include)
 target_compile_definitions(dreadovania_core PUBLIC DREADOVANIA_VERSION="${DREADOVANIA_VERSION}")
 
@@ -15,7 +15,7 @@ set(WARNINGS -Wall -Wextra -Werror -Wpedantic -Wconversion)
 set(SANITIZE -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
 target_compile_options(dreadovania_core PRIVATE ${WARNINGS} ${SANITIZE})
 
-add_executable(core_tests test_paths.cpp)
+add_executable(core_tests main.cpp test_paths.cpp test_json.cpp test_api.cpp)
 target_link_libraries(core_tests PRIVATE dreadovania_core)
 target_compile_options(core_tests PRIVATE ${WARNINGS} ${SANITIZE})
 target_link_options(core_tests PRIVATE ${SANITIZE})

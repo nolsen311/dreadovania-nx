@@ -41,5 +41,3 @@ TEST(normalizing) {
     CHECK(!normalize_sd_path("relative/path"));
     CHECK(!normalize_sd_path("/a/../b"));
 }
-
-int main() { return check::run_all(); }
