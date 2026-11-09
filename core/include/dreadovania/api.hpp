@@ -56,6 +56,15 @@ std::optional<std::vector<SeedSummary>> parse_seed_list(std::string_view body);
 // One line for the seed list, at most `width` characters.
 std::string describe_seed(const SeedSummary& seed, std::size_t width);
 
+// Whether the user's own CA (/config/dreadovania/ca.pem) was added to the trusted roots.
+enum class UserCa { Missing, Loaded, NotPem };
+UserCa classify_user_ca(std::string_view file_contents, bool exists);
+
+// Why a certificate wasn't trusted, with what to check. `tls_detail` is the TLS
+// library's own reason (may be empty); `switch_time_utc` is the console's clock.
+std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
+                                          std::string_view switch_time_utc);
+
 // The "detail" (or "title") of an RFC 9457 problem response, if there is one.
 std::optional<std::string> problem_detail(std::string_view body);
 

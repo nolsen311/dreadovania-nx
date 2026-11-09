@@ -215,6 +215,44 @@ std::string describe_seed(const SeedSummary& seed, std::size_t width) {
     return out.size() > width ? out.substr(0, width) : out;
 }
 
+UserCa classify_user_ca(std::string_view file_contents, bool exists) {
+    if (!exists) {
+        return UserCa::Missing;
+    }
+    if (file_contents.find("-----BEGIN CERTIFICATE-----") == std::string_view::npos) {
+        return UserCa::NotPem;
+    }
+    return UserCa::Loaded;
+}
+
+std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
+                                          std::string_view switch_time_utc) {
+    std::string out = "the server's certificate isn't trusted";
+    if (!tls_detail.empty()) {
+        out += " (" + std::string(tls_detail) + ")";
+    }
+    out += ". ";
+    switch (ca) {
+        case UserCa::Loaded:
+            out += "Your CA from /config/dreadovania/ca.pem was used. ";
+            break;
+        case UserCa::NotPem:
+            out += "/config/dreadovania/ca.pem isn't a PEM certificate (it must contain "
+                   "\"BEGIN CERTIFICATE\"), so it was ignored. ";
+            break;
+        case UserCa::Missing:
+            out += "If the server uses your own CA, copy its certificate to "
+                   "/config/dreadovania/ca.pem. ";
+            break;
+    }
+    out += "Also check the Switch's date and time";
+    if (!switch_time_utc.empty()) {
+        out += " (it says " + std::string(switch_time_utc) + " UTC)";
+    }
+    out += ": a new certificate looks \"not yet valid\" to a clock that is behind";
+    return out;
+}
+
 std::optional<std::string> problem_detail(std::string_view body) {
     json::ParseResult parsed = json::parse(body);
     if (!parsed.value || !parsed.value->is_object()) {
