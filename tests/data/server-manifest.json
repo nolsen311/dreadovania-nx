@@ -1,0 +1,28 @@
+{
+ "seed_id": "s1",
+ "file_count": 4,
+ "size_bytes": 3007,
+ "tar_bytes": 7168,
+ "files": [
+  {
+   "path": "atmosphere/contents/010093801237c000/exefs/main.npdm",
+   "size": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "path": "atmosphere/contents/010093801237c000/romfs/actors/characters/chozocommander/charclasses/chozocommander.bmsad",
+   "size": 700,
+   "sha256": "7fb638fe6a8de3603d5fe85dcec0f41371f4bb55a21964244cd96e1b7466fce3"
+  },
+  {
+   "path": "atmosphere/contents/010093801237c000/romfs/packs/system/system.pkg",
+   "size": 2304,
+   "sha256": "a8b2beedb2cb53792d92eb492452bf399e8ba7fa5659c1c916b0ec7410e06cc5"
+  },
+  {
+   "path": "atmosphere/exefs_patches/DreadRandovania/ABCDEF.ips",
+   "size": 3,
+   "sha256": "5c8eae2332b9cb59213e7baf80123633350bb065a3c275f454ad4998af1a218d"
+  }
+ ]
+}

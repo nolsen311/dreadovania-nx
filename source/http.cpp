@@ -125,46 +125,34 @@ std::string Http::init() {
         user_ca_count_ = certs.size();
         ca_dir_ = kUserCaDir;
     }
+    agent_ = "Dreadovania-NX/" + std::string(dreadovania::kVersion);
     ready_ = true;
     return "";
 }
 
 void Http::shutdown() {
+    if (handle_ != nullptr) {
+        curl_easy_cleanup(handle_);
+        handle_ = nullptr;
+    }
     curl_global_cleanup();
     socketExit();
     ready_ = false;
 }
 
-Response Http::request(std::string_view method, const std::string& url, const std::string& body,
-                       const std::string& token) {
-    Response response;
-    if (!ready_) {
-        response.error = "networking isn't ready";
-        return response;
+void Http::setup(const std::string& url, const char* method, curl_slist* headers, char* detail) {
+    // One handle for the whole session: curl keeps the connection open between
+    // requests, which saves a TLS handshake each time (ADR 0018).
+    if (handle_ == nullptr) {
+        handle_ = curl_easy_init();
+    } else {
+        curl_easy_reset(handle_);
     }
-    CURL* curl = curl_easy_init();
-    if (curl == nullptr) {
-        response.error = "networking isn't ready";
-        return response;
-    }
-    Sink sink{&response.body};
-    std::string method_str(method);
-    std::string agent = "Dreadovania-NX/" + std::string(dreadovania::kVersion);
-    curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Accept: application/json");
-    if (!body.empty()) {
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-    }
-    std::string auth;
-    if (!token.empty()) {
-        auth = "Authorization: Bearer " + token;
-        headers = curl_slist_append(headers, auth.c_str());
-    }
-
+    CURL* curl = handle_;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method_str.c_str());
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, agent.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, agent_.c_str());
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);  // never plain HTTP
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
@@ -176,27 +164,113 @@ Response Http::request(std::string_view method, const std::string& url, const st
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);  // the API never redirects
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    char detail[CURL_ERROR_SIZE] = {};
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, detail);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_data);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
-    if (!body.empty()) {
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
-    }
+}
 
-    CURLcode code = curl_easy_perform(curl);
+curl_slist* Http::headers(const std::string& token, bool json_body) {
+    curl_slist* list = curl_slist_append(nullptr, "Accept: application/json, application/x-tar");
+    if (json_body) {
+        list = curl_slist_append(list, "Content-Type: application/json");
+    }
+    if (!token.empty()) {
+        list = curl_slist_append(list, ("Authorization: Bearer " + token).c_str());
+    }
+    return list;
+}
+
+Response Http::request(std::string_view method, const std::string& url, const std::string& body,
+                       const std::string& token) {
+    Response response;
+    if (!ready_) {
+        response.error = "networking isn't ready";
+        return response;
+    }
+    Sink sink{&response.body};
+    std::string method_str(method);
+    curl_slist* list = headers(token, !body.empty());
+    char detail[CURL_ERROR_SIZE] = {};
+    setup(url, method_str.c_str(), list, detail);
+    curl_easy_setopt(handle_, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(handle_, CURLOPT_WRITEFUNCTION, on_data);
+    curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &sink);
+    if (!body.empty()) {
+        curl_easy_setopt(handle_, CURLOPT_POSTFIELDS, body.c_str());
+        curl_easy_setopt(handle_, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    }
+    CURLcode code = curl_easy_perform(handle_);
     if (code == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
+        curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     } else if (sink.too_big) {
         response.error = "the server's answer was too large";
     } else {
         response.error = describe(code, detail, user_ca_);
     }
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+    curl_slist_free_all(list);
+    return response;
+}
+
+namespace {
+
+struct Stream {
+    const std::function<bool(const char*, std::size_t)>* on_data;
+    const std::function<void(std::uint64_t)>* on_progress;
+    std::uint64_t received = 0;
+    long status = 0;
+    CURL* curl = nullptr;
+    bool stopped = false;
+    std::string error_body;  // a problem response is JSON, not the tar
+};
+
+size_t on_stream(char* data, size_t size, size_t count, void* user) {
+    auto* s = static_cast<Stream*>(user);
+    size_t n = size * count;
+    if (s->status == 0) {
+        curl_easy_getinfo(s->curl, CURLINFO_RESPONSE_CODE, &s->status);
+    }
+    if (s->status != 200) {
+        if (s->error_body.size() < 64 * 1024) {
+            s->error_body.append(data, n);
+        }
+        return n;
+    }
+    if (!(*s->on_data)(data, n)) {
+        s->stopped = true;
+        return 0;
+    }
+    s->received += n;
+    if (*s->on_progress) {
+        (*s->on_progress)(s->received);
+    }
+    return n;
+}
+
+}  // namespace
+
+Response Http::download(const std::string& url, const std::string& token,
+                        const std::function<bool(const char*, std::size_t)>& on_data,
+                        const std::function<void(std::uint64_t)>& on_progress) {
+    Response response;
+    if (!ready_) {
+        response.error = "networking isn't ready";
+        return response;
+    }
+    curl_slist* list = headers(token, false);
+    char detail[CURL_ERROR_SIZE] = {};
+    setup(url, "GET", list, detail);
+    Stream stream{&on_data, &on_progress, 0, 0, handle_, false, {}};
+    // No overall time limit for a download; give up if it stalls for 30 seconds.
+    curl_easy_setopt(handle_, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(handle_, CURLOPT_LOW_SPEED_TIME, 30L);
+    curl_easy_setopt(handle_, CURLOPT_WRITEFUNCTION, on_stream);
+    curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &stream);
+    CURLcode code = curl_easy_perform(handle_);
+    curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
+    if (code != CURLE_OK && !stream.stopped) {
+        response.error = describe(code, detail, user_ca_);
+    }
+    response.body = std::move(stream.error_body);
+    curl_slist_free_all(list);
     return response;
 }
 
