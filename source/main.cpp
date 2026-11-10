@@ -51,6 +51,23 @@ bool save_config(const DeviceConfig& config) {
 
 void forget_config() { std::remove(kDeviceFile); }
 
+// The last server address entered, kept even when pairing fails or after
+// unpairing, so it never has to be typed twice.
+constexpr const char* kServerFile = "sdmc:/config/dreadovania/server.txt";
+
+std::string load_last_server() {
+    std::ifstream in(kServerFile);
+    std::string line;
+    std::getline(in, line);
+    auto server = dreadovania::normalize_server_url(line);
+    return server.origin.value_or("");
+}
+
+void save_last_server(const std::string& origin) {
+    std::ofstream out(kServerFile, std::ios::trunc);
+    out << origin << "\n";
+}
+
 // ---- the Switch's own UI pieces --------------------------------------------------
 
 std::optional<std::string> keyboard(const char* header, const char* guide,
@@ -97,6 +114,7 @@ class App {
     void start() {
         net_error_ = http_.init();
         config_ = load_config();
+        last_server_ = config_ ? config_->server : load_last_server();
         if (config_) {
             refresh();
         }
@@ -112,7 +130,10 @@ class App {
         }
         if (!config_) {
             if (down & HidNpadButton_A) {
-                pair();
+                pair(/*change_server=*/last_server_.empty());
+                draw();
+            } else if ((down & HidNpadButton_Y) && !last_server_.empty()) {
+                pair(/*change_server=*/true);
                 draw();
             }
         } else if (down & HidNpadButton_Y) {
@@ -149,6 +170,7 @@ class App {
     std::string message_;
     bool loaded_ = false;
     bool confirm_unpair_ = false;
+    std::string last_server_;
 
     std::string url(const char* path) const { return config_->server + path; }
 
@@ -161,29 +183,37 @@ class App {
                std::to_string(r.status) + ")";
     }
 
-    void pair() {
+    void pair(bool change_server) {
         message_.clear();
         if (!net_error_.empty()) {
             message_ = net_error_;
             return;
         }
-        auto typed = keyboard("Server address", "https://dread.example.com", "https://", 200);
-        if (!typed) {
-            return;
+        dreadovania::ServerUrl server;
+        server.origin = last_server_;
+        if (change_server || last_server_.empty()) {
+            auto typed = keyboard("Server address", "https://dread.example.com",
+                                  last_server_.empty() ? "https://" : last_server_, 200);
+            if (!typed) {
+                return;
+            }
+            server = dreadovania::normalize_server_url(*typed);
+            if (!server.origin) {
+                message_ = "Not paired: " + server.error + ".";
+                return;
+            }
+            last_server_ = *server.origin;
+            save_last_server(last_server_);  // remembered even if pairing fails
         }
-        auto server = dreadovania::normalize_server_url(*typed);
-        if (!server.origin) {
-            message_ = "Not paired: " + server.error + ".";
-            return;
-        }
-        auto typed_code = keyboard("Pairing code",
+        // 8 letters and numbers; the dash shown on the server is optional.
+        auto typed_code = keyboard("Pairing code (8 letters and numbers, no dash needed)",
                                    "From the server: Account > Switch app > Pair a Switch", "", 9);
         if (!typed_code) {
             return;
         }
         auto code = dreadovania::normalize_pairing_code(*typed_code);
         if (!code) {
-            message_ = "Not paired: the code is 8 letters and numbers, like ABCD-EFGH.";
+            message_ = "Not paired: the code is 8 letters and numbers, like ABCDEFGH.";
             return;
         }
         std::string name = console_nickname();
@@ -214,6 +244,8 @@ class App {
         }
         app::Response r = http_.request("GET", url("/api/v1/seeds?limit=50"), "", config_->token);
         if (r.status == 401) {
+            last_server_ = config_->server;
+            save_last_server(last_server_);
             forget_config();
             config_.reset();
             message_ = "This Switch was removed on the server. Pair it again.";
@@ -233,6 +265,8 @@ class App {
         confirm_unpair_ = false;
         // Tell the server first; forget the token here whatever it answers.
         http_.request("DELETE", url("/api/v1/devices/me"), "", config_->token);
+        last_server_ = config_->server;
+        save_last_server(last_server_);
         forget_config();
         config_.reset();
         seeds_.clear();
@@ -257,8 +291,12 @@ class App {
         printf("%s\n\n", std::string(kWidth, '-').c_str());
         if (!config_) {
             printf("Not paired with a server yet.\n\n");
+            if (!last_server_.empty()) {
+                printf("Server: %s\n\n", last_server_.c_str());
+            }
             printf("1. On your server, open Account > Switch app > Pair a Switch.\n");
-            printf("2. Press A here, then enter the server's address and the code.\n\n");
+            printf("2. Press A here, then enter the code%s.\n\n",
+                   last_server_.empty() ? " (and the server's address first)" : "");
             printf("The server must use HTTPS (see its docs/https.md).\n");
             switch (http_.user_ca()) {
                 case dreadovania::UserCa::Loaded:
@@ -286,7 +324,8 @@ class App {
         }
         printf("\n%s\n", std::string(kWidth, '-').c_str());
         if (!config_) {
-            printf("A: pair    +: exit\n");
+            printf(last_server_.empty() ? "A: pair    +: exit\n"
+                                        : "A: pair    Y: change server    +: exit\n");
         } else {
             printf("Up/Down: choose    Y: refresh    X: unpair    +: exit\n");
         }
