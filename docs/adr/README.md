@@ -14,3 +14,4 @@ supersedes the old one; don't rewrite history.
 | [0006](0006-switch-tls-service.md) | Certificates are checked by the Switch's TLS service | Accepted |
 | [0007](0007-install-from-manifest-and-tar.md) | Installing a seed: a manifest and one tar, staged and checked | Accepted |
 | [0008](0008-release-by-comment.md) | Release with a `/release` comment and a release app | Accepted |
+| [0009](0009-graphical-ui.md) | A graphical UI drawn with SDL2 | Proposed |
