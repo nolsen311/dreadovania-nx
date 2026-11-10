@@ -60,6 +60,11 @@ std::string describe_seed(const SeedSummary& seed, std::size_t width);
 enum class UserCa { Missing, Loaded, NotPem };
 UserCa classify_user_ca(std::string_view file_contents, bool exists);
 
+// Each "-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----" block, in
+// order, as its own PEM text. The Switch's TLS service imports one certificate
+// per call, so a file with several must be split (ADR 0006).
+std::vector<std::string> split_pem_certificates(std::string_view text);
+
 // Why a certificate wasn't trusted, with what to check. `tls_detail` is the TLS
 // library's own reason (may be empty); `switch_time_utc` is the console's clock.
 std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,

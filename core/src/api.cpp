@@ -215,6 +215,27 @@ std::string describe_seed(const SeedSummary& seed, std::size_t width) {
     return out.size() > width ? out.substr(0, width) : out;
 }
 
+std::vector<std::string> split_pem_certificates(std::string_view text) {
+    constexpr std::string_view kBegin = "-----BEGIN CERTIFICATE-----";
+    constexpr std::string_view kEnd = "-----END CERTIFICATE-----";
+    std::vector<std::string> out;
+    std::size_t pos = 0;
+    while (true) {
+        std::size_t begin = text.find(kBegin, pos);
+        if (begin == std::string_view::npos) {
+            break;
+        }
+        std::size_t end = text.find(kEnd, begin + kBegin.size());
+        if (end == std::string_view::npos) {
+            break;  // a truncated block is ignored
+        }
+        end += kEnd.size();
+        out.emplace_back(std::string(text.substr(begin, end - begin)) + "\n");
+        pos = end;
+    }
+    return out;
+}
+
 UserCa classify_user_ca(std::string_view file_contents, bool exists) {
     if (!exists) {
         return UserCa::Missing;
