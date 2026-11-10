@@ -12,3 +12,4 @@ supersedes the old one; don't rewrite history.
 | [0004](0004-phase4-plan.md) | Phase 4 plan: what the app is built from and how it installs seeds | Proposed |
 | [0005](0005-trusted-roots-and-json.md) | Trusted roots from certifi, and a small JSON reader of our own | Accepted; roots superseded by 0006 |
 | [0006](0006-switch-tls-service.md) | Certificates are checked by the Switch's TLS service | Accepted |
+| [0007](0007-install-from-manifest-and-tar.md) | Installing a seed: a manifest and one tar, staged and checked | Accepted |

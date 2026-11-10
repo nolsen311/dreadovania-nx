@@ -14,6 +14,7 @@
 #include "dreadovania/api.hpp"
 #include "dreadovania/version.hpp"
 #include "http.hpp"
+#include "installer.hpp"
 
 namespace {
 
@@ -136,6 +137,9 @@ class App {
                 pair(/*change_server=*/true);
                 draw();
             }
+        } else if (down & HidNpadButton_A) {
+            install_selected();
+            draw();
         } else if (down & HidNpadButton_Y) {
             refresh();
             draw();
@@ -149,6 +153,7 @@ class App {
             draw();
         } else if (down & (HidNpadButton_AnyDown | HidNpadButton_AnyUp)) {
             move(down & HidNpadButton_AnyDown ? 1 : -1);
+            overwrite_for_.clear();  // a replace confirmation is for one seed only
             draw();
         } else if (down != 0 && confirm_unpair_) {
             confirm_unpair_ = false;
@@ -170,6 +175,42 @@ class App {
     std::string message_;
     bool loaded_ = false;
     bool confirm_unpair_ = false;
+    std::string installed_;      // the seed the SD card says is installed
+    std::string overwrite_for_;  // seed the user agreed to install over other mods' files
+
+    void install_selected() {
+        message_.clear();
+        if (seeds_.empty()) {
+            return;
+        }
+        const SeedSummary& seed = seeds_[cursor_];
+        if (seed.status != "ready") {
+            message_ = "This seed isn't ready yet (" + seed.status + ").";
+            return;
+        }
+        if (seed.mod_status != "ready") {
+            message_ = seed.mod_status == "pending"
+                           ? "This seed is still being patched on the server. Press Y to refresh."
+                           : "Patch this seed on the server first, then press Y.";
+            return;
+        }
+        bool overwrite = overwrite_for_ == seed.id;
+        consoleClear();
+        printf("Installing %s\n\n", dreadovania::describe_seed(seed, kWidth).c_str());
+        printf("Keep the app open until it finishes.\n\n");
+        consoleUpdate(nullptr);
+        app::InstallResult result = app::install_seed(
+            http_, config_->server, config_->token, seed.id, overwrite,
+            [](const std::string& line) {
+                printf("\r%-78s", line.c_str());
+                consoleUpdate(nullptr);
+            });
+        overwrite_for_ = result.conflicts.empty() ? "" : seed.id;
+        if (result.installed) {
+            installed_ = seed.id;
+        }
+        message_ = result.message;
+    }
     std::string last_server_;
 
     std::string url(const char* path) const { return config_->server + path; }
@@ -259,6 +300,7 @@ class App {
         seeds_ = std::move(*seeds);
         cursor_ = seeds_.empty() ? 0 : std::min(cursor_, seeds_.size() - 1);
         loaded_ = true;
+        installed_ = app::installed_seed().value_or("");
     }
 
     void unpair() {
@@ -315,8 +357,9 @@ class App {
             }
             std::size_t first = cursor_ >= kVisibleSeeds ? cursor_ - kVisibleSeeds + 1 : 0;
             for (std::size_t i = first; i < seeds_.size() && i < first + kVisibleSeeds; ++i) {
-                std::string line = dreadovania::describe_seed(seeds_[i], kWidth - 2);
-                printf("%s %s\n", i == cursor_ ? ">" : " ", line.c_str());
+                std::string line = dreadovania::describe_seed(seeds_[i], kWidth - 4);
+                printf("%s %s %s\n", i == cursor_ ? ">" : " ",
+                       seeds_[i].id == installed_ ? "*" : " ", line.c_str());
             }
         }
         if (!message_.empty()) {
@@ -327,7 +370,8 @@ class App {
             printf(last_server_.empty() ? "A: pair    +: exit\n"
                                         : "A: pair    Y: change server    +: exit\n");
         } else {
-            printf("Up/Down: choose    Y: refresh    X: unpair    +: exit\n");
+            printf("A: install    Up/Down: choose    Y: refresh    X: unpair    +: exit\n");
+            printf("* = installed on this Switch\n");
         }
     }
 };

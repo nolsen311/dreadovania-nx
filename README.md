@@ -5,8 +5,8 @@ randomizer seeds. It connects to a
 [Dreadovania Server](https://github.com/nolsen311/dreadovania-server) to
 generate seeds, download them, and swap them in and out with one action.
 
-> **Status:** early. The app pairs with a server and lists its seeds; installing
-> a seed comes next.
+> **Status:** early. The app pairs with a server, lists its seeds, and installs a
+> patched seed. Generating and patching from the Switch come next.
 > See [`docs/PLAN.md`](docs/PLAN.md) and [ADR 0004](docs/adr/0004-phase4-plan.md).
 
 ## Planned features
@@ -23,6 +23,10 @@ generate seeds, download them, and swap them in and out with one action.
    (see the server's `docs/https.md`).
 2. On the server, open **Account → Switch app → Pair a Switch**.
 3. In the app, press **A**, then enter the server's address and the code.
+
+In the seed list, choose a patched seed and press **A** to install it. The app
+downloads it, checks every file, and only then replaces the previous seed (other
+mods' files are kept; it asks before replacing any). `*` marks the installed seed.
 
 The app keeps its settings in `/config/dreadovania/device.json`. If your server
 uses a certificate from your own certificate authority, copy that CA's
