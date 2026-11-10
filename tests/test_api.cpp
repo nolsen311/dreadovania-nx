@@ -61,7 +61,8 @@ TEST(seed_lists) {
     const char* body = R"([
       {"id": "s1", "status": "ready", "preset_name": "Starter preset", "source": "preset",
        "created_at": "2026-11-09T20:00:00+00:00", "seed_hash": "ABCD EFGH",
-       "mod": {"status": "ready", "file_count": 12}, "race": false},
+       "mod": {"status": "ready", "file_count": 12, "job_id": "j2"}, "race": false,
+       "job_id": "j1"},
       {"id": "s2", "status": "pending", "preset_name": null, "source": "permalink",
        "created_at": "2026-11-09T21:00:00+00:00", "seed_hash": null, "mod": null}
     ])";
@@ -71,6 +72,8 @@ TEST(seed_lists) {
     CHECK((*seeds)[0].mod_status == "ready");
     CHECK((*seeds)[1].label == "Permalink");
     CHECK((*seeds)[1].mod_status.empty());
+    CHECK((*seeds)[0].job_id == "j1" && (*seeds)[0].mod_job_id == "j2");
+    CHECK((*seeds)[1].job_id.empty() && (*seeds)[1].mod_job_id.empty());
     CHECK(describe_seed((*seeds)[0], 80) ==
           "2026-11-09  Starter preset  ABCD EFGH  [patched]");
     CHECK(describe_seed((*seeds)[1], 80) == "2026-11-09  Permalink  [pending]");
@@ -80,11 +83,34 @@ TEST(seed_lists) {
 }
 
 TEST(long_seed_lines_are_cut_to_the_screen) {
-    SeedSummary seed{"s", "ready", std::string(100, 'x'), "2026-11-09", "", ""};
+    SeedSummary seed{"s", "ready", std::string(100, 'x'), "2026-11-09", "", "", "", ""};
     std::string line = describe_seed(seed, 40);
     CHECK(line.size() == 40);
     CHECK(line.find("...  [not patched]") != std::string::npos);
     CHECK(describe_seed(seed, 5).size() <= 5);
+}
+
+TEST(presets_and_jobs) {
+    auto presets = parse_preset_list(R"([
+      {"id": "starter_preset", "name": "Starter preset", "description": "A good start",
+       "builtin": true},
+      {"id": "p2", "name": "", "description": "", "builtin": false}
+    ])");
+    CHECK(presets && presets->size() == 2);
+    CHECK((*presets)[0].name == "Starter preset" && (*presets)[0].description == "A good start");
+    CHECK((*presets)[1].name == "p2");  // never a blank line
+    CHECK(!parse_preset_list(R"([{"name": "no id"}])"));
+    CHECK(!parse_preset_list("{}"));
+
+    CHECK(generate_request_body("a\"b", false) == R"({"preset_id": "a\"b", "race": false})");
+    auto sub = parse_submitted(R"({"seed_id": "s1", "job_id": "j1"})");
+    CHECK(sub && sub->seed_id == "s1" && sub->job_id == "j1");
+    CHECK(!parse_submitted(R"({"seed_id": "s1"})"));
+
+    auto job = parse_job(R"({"status": "running", "progress": "Placing items", "error": null})");
+    CHECK(job && job->progress == "Placing items" && job->error.empty() && !job->finished());
+    CHECK(parse_job(R"({"status": "failed", "error": "boom"})")->finished());
+    CHECK(!parse_job(R"({"progress": "x"})"));
 }
 
 TEST(problem_details) {

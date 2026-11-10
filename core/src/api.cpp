@@ -182,10 +182,64 @@ std::optional<std::vector<SeedSummary>> parse_seed_list(std::string_view body) {
         seed.seed_hash = item.string_at("seed_hash").value_or("");
         if (const json::Value* mod = item.get("mod"); mod != nullptr && mod->is_object()) {
             seed.mod_status = mod->string_at("status").value_or("");
+            seed.mod_job_id = mod->string_at("job_id").value_or("");
         }
+        seed.job_id = item.string_at("job_id").value_or("");
         seeds.push_back(std::move(seed));
     }
     return seeds;
+}
+
+std::optional<std::vector<PresetSummary>> parse_preset_list(std::string_view body) {
+    json::ParseResult parsed = json::parse(body);
+    if (!parsed.value || !parsed.value->is_array()) {
+        return std::nullopt;
+    }
+    std::vector<PresetSummary> presets;
+    for (const json::Value& item : parsed.value->items()) {
+        auto id = item.is_object() ? item.string_at("id") : std::nullopt;
+        if (!id || id->empty()) {
+            return std::nullopt;
+        }
+        PresetSummary preset{*id, item.string_at("name").value_or(""),
+                             item.string_at("description").value_or("")};
+        if (preset.name.empty()) {
+            preset.name = preset.id;
+        }
+        presets.push_back(std::move(preset));
+    }
+    return presets;
+}
+
+std::string generate_request_body(std::string_view preset_id, bool race) {
+    return "{\"preset_id\": " + json::quote(preset_id) +
+           ", \"race\": " + (race ? "true" : "false") + "}";
+}
+
+std::optional<Submitted> parse_submitted(std::string_view body) {
+    json::ParseResult parsed = json::parse(body);
+    if (!parsed.value || !parsed.value->is_object()) {
+        return std::nullopt;
+    }
+    auto seed_id = parsed.value->string_at("seed_id");
+    auto job_id = parsed.value->string_at("job_id");
+    if (!seed_id || !job_id || seed_id->empty() || job_id->empty()) {
+        return std::nullopt;
+    }
+    return Submitted{*seed_id, *job_id};
+}
+
+std::optional<JobState> parse_job(std::string_view body) {
+    json::ParseResult parsed = json::parse(body);
+    if (!parsed.value || !parsed.value->is_object()) {
+        return std::nullopt;
+    }
+    auto status = parsed.value->string_at("status");
+    if (!status || status->empty()) {
+        return std::nullopt;
+    }
+    return JobState{*status, parsed.value->string_at("progress").value_or(""),
+                    parsed.value->string_at("error").value_or("")};
 }
 
 std::string describe_seed(const SeedSummary& seed, std::size_t width) {

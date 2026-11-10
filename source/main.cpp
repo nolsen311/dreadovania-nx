@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Dreadovania for Switch (ADR 0004): pair with a Dreadovania server, then list
-// its seeds. A text UI for now; installing seeds comes in the next version.
+// Dreadovania for Switch (ADR 0004): pair with a Dreadovania server, list its
+// seeds, generate and patch new ones there, and install them. A text UI for now.
 #include <switch.h>
 
 #include <cstdio>
@@ -15,10 +15,12 @@
 #include "dreadovania/version.hpp"
 #include "http.hpp"
 #include "installer.hpp"
+#include "jobs.hpp"
 
 namespace {
 
 using dreadovania::DeviceConfig;
+using dreadovania::PresetSummary;
 using dreadovania::SeedSummary;
 
 constexpr const char* kDeviceFile = "sdmc:/config/dreadovania/device.json";
@@ -129,6 +131,10 @@ class App {
         if (down & HidNpadButton_Plus) {
             return false;
         }
+        if (config_ && screen_ == Screen::Presets) {
+            presets_step(down);
+            return !quitting_;
+        }
         if (!config_) {
             if (down & HidNpadButton_A) {
                 pair(/*change_server=*/last_server_.empty());
@@ -138,7 +144,10 @@ class App {
                 draw();
             }
         } else if (down & HidNpadButton_A) {
-            install_selected();
+            get_selected();
+            draw();
+        } else if (down & HidNpadButton_R) {
+            open_presets();
             draw();
         } else if (down & HidNpadButton_Y) {
             refresh();
@@ -160,7 +169,7 @@ class App {
             message_.clear();
             draw();
         }
-        return true;
+        return !quitting_;
     }
 
     void stop() { http_.shutdown(); }
@@ -177,39 +186,189 @@ class App {
     bool confirm_unpair_ = false;
     std::string installed_;      // the seed the SD card says is installed
     std::string overwrite_for_;  // seed the user agreed to install over other mods' files
+    bool quitting_ = false;      // the system asked the app to close while it was waiting
 
-    void install_selected() {
+    enum class Screen { Seeds, Presets };
+    Screen screen_ = Screen::Seeds;
+    std::vector<PresetSummary> presets_;
+    std::size_t preset_cursor_ = 0;
+    bool race_ = false;
+
+    // ---- getting a seed onto the Switch -----------------------------------------------
+
+    static void show_status(const std::string& line) {
+        printf("\r%-78.78s", line.c_str());
+        consoleUpdate(nullptr);
+    }
+
+    // About a second, still answering the system and the B button.
+    bool wait_a_moment() {
+        for (int i = 0; i < 20; ++i) {
+            if (!appletMainLoop()) {
+                quitting_ = true;
+                return false;
+            }
+            padUpdate(&pad_);
+            if (padGetButtonsDown(&pad_) & HidNpadButton_B) {
+                return false;
+            }
+            consoleUpdate(nullptr);
+            svcSleepThread(50'000'000LL);
+        }
+        return true;
+    }
+
+    void begin_work(const std::string& title) {
+        consoleClear();
+        printf("%s\n\n", title.c_str());
+        printf("Generating and patching take a minute or two on the server.\n");
+        printf("B: stop waiting (the server carries on)\n\n");
+        consoleUpdate(nullptr);
+    }
+
+    // Whatever the selected seed still needs: finish generating, patch, then install.
+    void get_selected() {
         message_.clear();
         if (seeds_.empty()) {
+            message_ = "No seeds yet. Press R to generate one.";
             return;
         }
-        const SeedSummary& seed = seeds_[cursor_];
-        if (seed.status != "ready") {
-            message_ = "This seed isn't ready yet (" + seed.status + ").";
+        SeedSummary seed = seeds_[cursor_];
+        if (seed.status == "failed" || seed.status == "cancelled") {
+            message_ = "This seed " + seed.status + " on the server. Press R for a new one.";
             return;
         }
-        if (seed.mod_status != "ready") {
-            message_ = seed.mod_status == "pending"
-                           ? "This seed is still being patched on the server. Press Y to refresh."
-                           : "Patch this seed on the server first, then press Y.";
+        std::string verb = seed.status == "ready" && seed.mod_status == "ready" ? "Installing"
+                                                                                : "Getting";
+        begin_work(verb + " " + dreadovania::describe_seed(seed, kWidth - verb.size() - 1));
+        deliver(seed);
+    }
+
+    // Generate from the chosen preset, then patch and install.
+    void new_seed() {
+        const PresetSummary& preset = presets_[preset_cursor_];
+        begin_work("New seed: " + preset.name + (race_ ? " (race)" : ""));
+        app::JobResult made = app::generate_seed(
+            http_, config_->server, config_->token, preset.id, race_, show_status,
+            [this] { return wait_a_moment(); });
+        screen_ = Screen::Seeds;
+        if (!made.ok) {
+            finish(made.seed_id, made.message);
             return;
         }
-        bool overwrite = overwrite_for_ == seed.id;
-        consoleClear();
-        printf("Installing %s\n\n", dreadovania::describe_seed(seed, kWidth).c_str());
-        printf("Keep the app open until it finishes.\n\n");
-        consoleUpdate(nullptr);
+        SeedSummary seed;
+        seed.id = made.seed_id;
+        seed.status = "ready";
+        deliver(seed);
+    }
+
+    void deliver(const SeedSummary& seed) {
+        auto wait = [this] { return wait_a_moment(); };
+        const std::string& server = config_->server;
+        const std::string& token = config_->token;
+        if (seed.status == "pending") {
+            if (seed.job_id.empty()) {
+                finish(seed.id, "This seed is still being generated. Press Y to refresh.");
+                return;
+            }
+            app::JobResult made =
+                app::follow_job(http_, server, token, seed.job_id, "Generating", show_status, wait);
+            if (!made.ok) {
+                finish(seed.id, made.message);
+                return;
+            }
+        }
+        std::string mod = seed.status == "pending" ? "" : seed.mod_status;
+        if (mod != "ready") {
+            app::JobResult patched =
+                mod == "pending" && !seed.mod_job_id.empty()
+                    ? app::follow_job(http_, server, token, seed.mod_job_id, "Patching",
+                                      show_status, wait)
+                    : app::patch_seed(http_, server, token, seed.id, show_status, wait);
+            if (!patched.ok) {
+                finish(seed.id, patched.message);
+                return;
+            }
+        }
+        show_status("Patched. Downloading...");
+        printf("\n\nKeep the app open until it finishes.\n\n");
         app::InstallResult result = app::install_seed(
-            http_, config_->server, config_->token, seed.id, overwrite,
-            [](const std::string& line) {
-                printf("\r%-78s", line.c_str());
-                consoleUpdate(nullptr);
-            });
+            http_, server, token, seed.id, overwrite_for_ == seed.id, show_status);
         overwrite_for_ = result.conflicts.empty() ? "" : seed.id;
-        if (result.installed) {
-            installed_ = seed.id;
+        finish(seed.id, result.message);
+    }
+
+    // Back to the list, with the seed selected and the outcome shown.
+    void finish(const std::string& seed_id, const std::string& message) {
+        if (quitting_) {
+            return;
         }
-        message_ = result.message;
+        refresh();
+        for (std::size_t i = 0; i < seeds_.size(); ++i) {
+            if (seeds_[i].id == seed_id) {
+                cursor_ = i;
+            }
+        }
+        std::string list_problem = loaded_ ? "" : message_;  // refresh() explains a failure
+        message_ = list_problem.empty() ? message : message + "\n" + list_problem;
+    }
+
+    // ---- choosing a preset ------------------------------------------------------------
+
+    void open_presets() {
+        message_.clear();
+        if (!net_error_.empty()) {
+            message_ = net_error_;
+            return;
+        }
+        app::Response r = http_.request("GET", url("/api/v1/presets"), "", config_->token);
+        auto presets = r.status == 200 ? dreadovania::parse_preset_list(r.body) : std::nullopt;
+        if (!presets) {
+            message_ = "Couldn't load presets: " + explain(r, "unexpected answer");
+            return;
+        }
+        if (presets->empty()) {
+            message_ = "The server has no presets yet.";
+            return;
+        }
+        presets_ = std::move(*presets);
+        preset_cursor_ = std::min(preset_cursor_, presets_.size() - 1);
+        screen_ = Screen::Presets;
+    }
+
+    void presets_step(u64 down) {
+        if (down & HidNpadButton_A) {
+            new_seed();
+        } else if (down & HidNpadButton_B) {
+            screen_ = Screen::Seeds;
+        } else if (down & HidNpadButton_X) {
+            race_ = !race_;
+        } else if (down & HidNpadButton_AnyDown) {
+            preset_cursor_ = std::min(preset_cursor_ + 1, presets_.size() - 1);
+        } else if (down & HidNpadButton_AnyUp) {
+            preset_cursor_ = preset_cursor_ > 0 ? preset_cursor_ - 1 : 0;
+        } else {
+            return;
+        }
+        if (!quitting_) {
+            draw();
+        }
+    }
+
+    void draw_presets() const {
+        printf("New seed: choose a preset\n\n");
+        std::size_t first =
+            preset_cursor_ >= kVisibleSeeds ? preset_cursor_ - kVisibleSeeds + 1 : 0;
+        for (std::size_t i = first; i < presets_.size() && i < first + kVisibleSeeds; ++i) {
+            printf("%s %.*s\n", i == preset_cursor_ ? ">" : " ", static_cast<int>(kWidth - 2),
+                   presets_[i].name.c_str());
+        }
+        const std::string& about = presets_[preset_cursor_].description;
+        if (!about.empty()) {
+            printf("\n%.*s\n", static_cast<int>(kWidth * 3), about.c_str());
+        }
+        printf("\nRace seed (no spoiler on the server): %s\n", race_ ? "on" : "off");
+        printf("\nA: generate, patch and install    X: race on/off    B: back\n");
     }
     std::string last_server_;
 
@@ -331,6 +490,10 @@ class App {
         std::string version(dreadovania::kVersion);
         printf("Dreadovania %s\n", version.c_str());
         printf("%s\n\n", std::string(kWidth, '-').c_str());
+        if (config_ && screen_ == Screen::Presets) {
+            draw_presets();
+            return;
+        }
         if (!config_) {
             printf("Not paired with a server yet.\n\n");
             if (!last_server_.empty()) {
@@ -353,7 +516,7 @@ class App {
         } else {
             printf("Server: %s\n\n", config_->server.c_str());
             if (loaded_ && seeds_.empty()) {
-                printf("No seeds yet. Generate one on the server, then press Y.\n");
+                printf("No seeds yet. Press R to generate one.\n");
             }
             std::size_t first = cursor_ >= kVisibleSeeds ? cursor_ - kVisibleSeeds + 1 : 0;
             for (std::size_t i = first; i < seeds_.size() && i < first + kVisibleSeeds; ++i) {
@@ -370,8 +533,8 @@ class App {
             printf(last_server_.empty() ? "A: pair    +: exit\n"
                                         : "A: pair    Y: change server    +: exit\n");
         } else {
-            printf("A: install    Up/Down: choose    Y: refresh    X: unpair    +: exit\n");
-            printf("* = installed on this Switch\n");
+            printf("A: install    R: new seed    Up/Down: choose    Y: refresh    X: unpair\n");
+            printf("+: exit    * = installed on this Switch\n");
         }
     }
 };

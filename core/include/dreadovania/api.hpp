@@ -50,11 +50,40 @@ struct SeedSummary {
     std::string created_at;   // ISO 8601
     std::string seed_hash;    // the in-game hash, if ready
     std::string mod_status;   // "" if not patched, else pending/ready/failed
+    std::string job_id;       // the job that generated it
+    std::string mod_job_id;   // the job that patched it (or is patching it)
 };
 std::optional<std::vector<SeedSummary>> parse_seed_list(std::string_view body);
 
 // One line for the seed list, at most `width` characters.
 std::string describe_seed(const SeedSummary& seed, std::size_t width);
+
+// Presets to generate from (GET /presets).
+struct PresetSummary {
+    std::string id;
+    std::string name;
+    std::string description;
+};
+std::optional<std::vector<PresetSummary>> parse_preset_list(std::string_view body);
+
+// POST /seeds: a new seed from a preset; race seeds have no spoiler.
+std::string generate_request_body(std::string_view preset_id, bool race);
+
+// The answer to POST /seeds and POST /seeds/{id}/mod: the seed and its job.
+struct Submitted {
+    std::string seed_id;
+    std::string job_id;
+};
+std::optional<Submitted> parse_submitted(std::string_view body);
+
+// GET /jobs/{id}.
+struct JobState {
+    std::string status;    // queued, running, succeeded, failed, cancelled
+    std::string progress;  // the server's latest progress line, may be empty
+    std::string error;     // why it failed, may be empty
+    bool finished() const { return status == "succeeded" || status == "failed" || status == "cancelled"; }
+};
+std::optional<JobState> parse_job(std::string_view body);
 
 // Whether the user's own CA (/config/dreadovania/ca.pem) was added to the trusted roots.
 enum class UserCa { Missing, Loaded, NotPem };

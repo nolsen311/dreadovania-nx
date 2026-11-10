@@ -5,8 +5,8 @@ randomizer seeds. It connects to a
 [Dreadovania Server](https://github.com/nolsen311/dreadovania-server) to
 generate seeds, download them, and swap them in and out with one action.
 
-> **Status:** early. The app pairs with a server, lists its seeds, and installs a
-> patched seed. Generating and patching from the Switch come next.
+> **Status:** early. The app pairs with a server, lists its seeds, generates and
+> patches new ones from a preset, and installs them. A text UI for now.
 > See [`docs/PLAN.md`](docs/PLAN.md) and [ADR 0004](docs/adr/0004-phase4-plan.md).
 
 ## Planned features
@@ -24,9 +24,17 @@ generate seeds, download them, and swap them in and out with one action.
 2. On the server, open **Account → Switch app → Pair a Switch**.
 3. In the app, press **A**, then enter the server's address and the code.
 
-In the seed list, choose a patched seed and press **A** to install it. The app
-downloads it, checks every file, and only then replaces the previous seed (other
+Press **R** for a new seed: choose a preset (**X** makes it a race seed, with
+no spoiler on the server) and press **A**. The server generates the seed and
+patches it with your game files, and the app installs it. It takes a minute or
+two; **B** stops waiting, and the server carries on.
+
+In the seed list, press **A** on any seed to get it onto the Switch: the app does
+whatever it still needs (finish generating, patch, install). It downloads the
+patched files, checks every one, and only then replaces the previous seed (other
 mods' files are kept; it asks before replacing any). `*` marks the installed seed.
+
+Patching needs your game files on the server (its **Game files** page).
 
 The app keeps its settings in `/config/dreadovania/device.json`. If your server
 uses a certificate from your own certificate authority, copy that CA's
