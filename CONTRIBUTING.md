@@ -71,6 +71,60 @@ job. History on `main` is never rewritten: the maintainer signs off on it in a
 follow-up pull request that adds an entry to
 [`docs/dco-remediations.md`](docs/dco-remediations.md).
 
+## Releasing (maintainer)
+
+1. A pull request bumps the version in [`VERSION`](VERSION). Ask Claude for
+   "release X.Y.Z" and it opens one.
+2. Comment `/signoff` on it, as for any change.
+3. Once it has merged, comment exactly **`/release`** on the same pull request.
+   The *Release by comment* workflow tags the merge commit `vX.Y.Z` (the version
+   in the version file at that commit) with the release app (below), and the new
+   tag starts the *Release* workflow, which builds the `.nro` once you approve
+   the `release` deployment. It refuses, with a comment saying why, if the
+   pull request isn't merged, its checks didn't pass, or the version is already
+   released or isn't newer than the latest release. A 👍 on your comment means
+   the tag was created. Only the repository owner can trigger it (ADR 0008).
+
+Pushing a `v*` tag yourself still works too.
+
+### Release app (one-time setup)
+
+The tag ruleset lets only admins and your **release app** create `v*` tags; the
+workflow's own token can't be exempted on a personal account (ADR 0008).
+
+1. **Create the app:** <https://github.com/settings/apps/new>
+   - **Name:** anything unique, e.g. `dreadovania-releaser-<you>`. Or reuse the
+     server's release app: install it on this repository too (step 3) and use
+     its App ID, Client ID and key.
+   - **Homepage URL:** this repository's URL.
+   - **Webhook:** untick **Active**.
+   - **Repository permissions:** **Contents: Read and write**. Nothing else.
+   - **Where can this GitHub App be installed?** **Only on this account.**
+2. **On the app's page:** note the **App ID** and **Client ID**, then
+   **Generate a private key** (a `.pem` file downloads).
+3. **Install App** → **Only select repositories** → this repository.
+4. **Store the settings** (from a clone, with `gh` logged in as you):
+
+   ```bash
+   gh variable set RELEASE_APP_ID --body <App ID>
+   ```
+
+   ```bash
+   gh variable set RELEASE_APP_CLIENT_ID --body <Client ID>
+   ```
+
+   ```bash
+   scripts/bootstrap.sh nolsen311/dreadovania-nx
+   ```
+
+   ```bash
+   gh secret set RELEASE_APP_PRIVATE_KEY --env release-tag < path/to/key.pem
+   ```
+
+   `bootstrap.sh` creates the `release-tag` environment (main only) and adds the
+   app to the tag ruleset's bypass list. Then delete the `.pem` file, or keep it
+   only in a password manager: GitHub can generate a new key at any time.
+
 ## Security issues
 
 Don't open public issues for vulnerabilities. See [`SECURITY.md`](SECURITY.md).
