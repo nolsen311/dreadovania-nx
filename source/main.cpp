@@ -297,7 +297,6 @@ class App {
 
 int main(int /*argc*/, char** /*argv*/) {
     consoleInit(nullptr);
-    romfsInit();
     App app;
     app.start();
     while (appletMainLoop()) {
@@ -307,7 +306,6 @@ int main(int /*argc*/, char** /*argv*/) {
         consoleUpdate(nullptr);
     }
     app.stop();
-    romfsExit();
     consoleExit(nullptr);
     return 0;
 }

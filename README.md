@@ -26,8 +26,9 @@ generate seeds, download them, and swap them in and out with one action.
 
 The app keeps its settings in `/config/dreadovania/device.json`. If your server
 uses a certificate from your own certificate authority, copy that CA's
-certificate to `/config/dreadovania/ca.pem`: the app trusts it in addition to
-the usual public authorities. Certificates are always checked.
+certificate (and any intermediates) to `/config/dreadovania/ca.pem`: the app
+trusts it in addition to the Switch's own trusted authorities. Certificates are
+always checked.
 
 ## Building
 

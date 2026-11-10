@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HTTPS to the server with libcurl and mbedTLS (ADR 0004). Certificates are
-// always verified: against the bundled Mozilla roots, plus the user's own CA
-// from /config/dreadovania/ca.pem if they put one there. There is no option
-// to skip verification.
+// HTTPS to the server with libcurl, whose TLS on the Switch is the console's
+// own ssl service (devkitPro builds curl with its libnx backend; ADR 0006).
+// Certificates are always verified: against the Switch's trusted roots, plus
+// the user's own CA from /config/dreadovania/ca.pem if they put one there.
+// There is no option to skip verification.
 #pragma once
 
 #include <string>
@@ -30,7 +31,8 @@ class Http {
 
   private:
     bool ready_ = false;
-    std::string ca_file_;
+    std::string ca_dir_;
+    std::size_t user_ca_count_ = 0;
     dreadovania::UserCa user_ca_ = dreadovania::UserCa::Missing;
 };
 

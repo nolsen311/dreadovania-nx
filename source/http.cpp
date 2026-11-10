@@ -3,6 +3,7 @@
 
 #include <curl/curl.h>
 #include <switch.h>
+#include <dirent.h>
 #include <sys/stat.h>
 
 #include <cstdio>
@@ -16,9 +17,11 @@ namespace app {
 
 namespace {
 
-constexpr const char* kBundledRoots = "romfs:/cacert.pem";
 constexpr const char* kUserCa = "sdmc:/config/dreadovania/ca.pem";
-constexpr const char* kCombined = "sdmc:/config/dreadovania/trusted-roots.pem";
+// The user's CA certificates, one per file: the TLS service imports one
+// certificate per call, and curl's libnx backend imports each file in
+// CURLOPT_CAPATH separately (ADR 0006).
+constexpr const char* kUserCaDir = "sdmc:/config/dreadovania/trusted";
 constexpr std::size_t kMaxBody = 4 * 1024 * 1024;
 
 bool read_file(const char* path, std::string& out) {
@@ -70,6 +73,7 @@ std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca) 
         case CURLE_OPERATION_TIMEDOUT:
             return "the server took too long to answer";
         case CURLE_PEER_FAILED_VERIFICATION:
+        case CURLE_SSL_CERTPROBLEM:
         case CURLE_SSL_CACERT_BADFILE:
             return dreadovania::untrusted_certificate_message(detail, ca, switch_time_utc());
         case CURLE_SSL_CONNECT_ERROR:
@@ -91,28 +95,36 @@ std::string Http::init() {
         socketExit();
         return "networking couldn't start";
     }
-    std::string roots;
-    if (!read_file(kBundledRoots, roots) || roots.empty()) {
-        shutdown();
-        return "the app's trusted certificates are missing: reinstall the app";
+    // Public authorities are checked against the Switch's own trusted roots.
+    // The user's own CA is added from ca.pem, one certificate per file.
+    mkdir("sdmc:/config", 0777);
+    mkdir("sdmc:/config/dreadovania", 0777);
+    mkdir(kUserCaDir, 0777);
+    if (DIR* dir = opendir(kUserCaDir)) {  // forget certificates from an older ca.pem
+        while (dirent* entry = readdir(dir)) {
+            if (entry->d_name[0] != '.') {
+                std::remove((std::string(kUserCaDir) + "/" + entry->d_name).c_str());
+            }
+        }
+        closedir(dir);
     }
     std::string user_ca;
     bool has_user_ca = read_file(kUserCa, user_ca);
     user_ca_ = dreadovania::classify_user_ca(user_ca, has_user_ca);
     if (user_ca_ == dreadovania::UserCa::Loaded) {
-        roots += "\n" + user_ca;
+        std::vector<std::string> certs = dreadovania::split_pem_certificates(user_ca);
+        for (std::size_t i = 0; i < certs.size(); ++i) {
+            std::string path = std::string(kUserCaDir) + "/ca-" + std::to_string(i) + ".pem";
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            out << certs[i];
+            if (!out) {
+                shutdown();
+                return "couldn't write to the SD card (/config/dreadovania)";
+            }
+        }
+        user_ca_count_ = certs.size();
+        ca_dir_ = kUserCaDir;
     }
-    // libcurl 7.69 can only read trusted roots from a file, so combine them.
-    mkdir("sdmc:/config", 0777);
-    mkdir("sdmc:/config/dreadovania", 0777);
-    std::ofstream out(kCombined, std::ios::binary | std::ios::trunc);
-    out << roots;
-    out.close();
-    if (!out) {
-        shutdown();
-        return "couldn't write to the SD card (/config/dreadovania)";
-    }
-    ca_file_ = kCombined;
     ready_ = true;
     return "";
 }
@@ -156,7 +168,11 @@ Response Http::request(std::string_view method, const std::string& url, const st
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);  // never plain HTTP
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-    curl_easy_setopt(curl, CURLOPT_CAINFO, ca_file_.c_str());
+    // No CA file: the Switch's trusted roots, plus the user's CA if there is one.
+    curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
+    if (!ca_dir_.empty()) {
+        curl_easy_setopt(curl, CURLOPT_CAPATH, ca_dir_.c_str());
+    }
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);  // the API never redirects
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);

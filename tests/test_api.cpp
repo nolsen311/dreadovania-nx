@@ -114,3 +114,15 @@ TEST(untrusted_certificate_messages_say_what_to_check) {
     CHECK(untrusted_certificate_message("x", UserCa::NotPem, "t").find("isn't a PEM") !=
           std::string::npos);
 }
+
+TEST(pem_files_are_split_one_certificate_each) {
+    const std::string one = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----";
+    const std::string two = "-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----";
+    auto certs = split_pem_certificates("subject=x\r\n" + one + "\r\n\nnoise\n" + two + "\n");
+    CHECK(certs.size() == 2);
+    CHECK(certs[0] == one + "\n");
+    CHECK(certs[1] == two + "\n");
+    CHECK(split_pem_certificates("").empty());
+    CHECK(split_pem_certificates("-----BEGIN CERTIFICATE-----\ntruncated").empty());
+    CHECK(split_pem_certificates(one + "\n-----BEGIN CERTIFICATE-----\nX").size() == 1);
+}
