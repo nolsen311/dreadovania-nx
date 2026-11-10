@@ -113,6 +113,31 @@ TEST(presets_and_jobs) {
     CHECK(!parse_job(R"({"progress": "x"})"));
 }
 
+TEST(seed_chips_and_dates) {
+    SeedSummary seed{"s", "ready", "Starter", "2026-11-09T20:00:00+00:00", "", "ready", "", ""};
+    CHECK(seed_state(seed, false).label == "Patched" && seed_state(seed, false).tone == Tone::Ok);
+    CHECK(seed_state(seed, true).label == "Installed");
+    seed.mod_status = "";
+    CHECK(seed_state(seed, false).label == "Not patched");
+    seed.mod_status = "pending";
+    CHECK(seed_state(seed, false).tone == Tone::Wait);
+    seed.status = "pending";
+    CHECK(seed_state(seed, false).label == "Generating");
+    seed.status = "failed";
+    CHECK(seed_state(seed, false).tone == Tone::Bad);
+    CHECK(short_date("2026-11-09T20:00:00+00:00") == "Nov 9");
+    CHECK(short_date("2026-01-31") == "Jan 31");
+    CHECK(short_date("2026-13-01").empty());
+    CHECK(short_date("soon").empty());
+}
+
+TEST(preset_descriptions_as_plain_text) {
+    CHECK(plain_text("One.<br/><br/>Two &amp; <b>three</b>") == "One.\n\nTwo & three");
+    CHECK(plain_text("a<BR>b<br />c") == "a\nb\nc");
+    CHECK(plain_text("unclosed <tag") == "unclosed");  // trailing space trimmed
+    CHECK(plain_text("x &unknown; y") == "x &unknown; y");
+}
+
 TEST(problem_details) {
     CHECK(problem_detail(R"({"title": "Pairing failed", "detail": "code expired"})") ==
           "code expired");

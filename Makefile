@@ -17,7 +17,7 @@ VERSION_STRING := $(strip $(file < $(TOPDIR)/VERSION))
 
 TARGET      := dreadovania
 BUILD       := build
-SOURCES     := source core/src
+SOURCES     := source source/ui core/src
 DATA        :=
 INCLUDES    := core/include source
 ICON        := icon.jpg
@@ -35,7 +35,8 @@ CFLAGS   += $(INCLUDE) -D__SWITCH__
 CXXFLAGS := $(CFLAGS) -std=gnu++20 -fno-rtti -fno-exceptions
 ASFLAGS  := -g $(ARCH)
 LDFLAGS   = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LIBS     := -lcurl -lz -lnx
+LIBS     := -lcurl -lSDL2_ttf -lharfbuzz -lfreetype -lbz2 -lpng16 -lSDL2_gfx -lSDL2 \
+            -lEGL -lglapi -ldrm_nouveau -lz -lnx
 LIBDIRS  := $(PORTLIBS) $(LIBNX)
 
 #---------------------------------------------------------------------------------
@@ -52,7 +53,8 @@ export LD          := $(CXX)
 export OFILES_SRC  := $(CPPFILES:.cpp=.o)
 export OFILES      := $(OFILES_SRC)
 export INCLUDE     := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-                      $(foreach dir,$(LIBDIRS),-isystem $(dir)/include) -I$(CURDIR)/$(BUILD)
+                      $(foreach dir,$(LIBDIRS),-isystem $(dir)/include) -isystem $(PORTLIBS)/include/SDL2 \
+                      -I$(CURDIR)/$(BUILD)
 export LIBPATHS    := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 export APP_ICON    := $(TOPDIR)/$(ICON)
 export NROFLAGS    += --icon=$(APP_ICON) --nacp=$(CURDIR)/$(TARGET).nacp

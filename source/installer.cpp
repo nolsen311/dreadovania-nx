@@ -89,7 +89,8 @@ std::optional<std::string> installed_seed() {
 
 InstallResult install_seed(Http& http, const std::string& server, const std::string& token,
                            const std::string& seed_id, bool overwrite,
-                           const std::function<void(const std::string&)>& status) {
+                           const std::function<void(const std::string&)>& status,
+                           const std::function<void(double)>& progress) {
     InstallResult result;
     const std::string base = server + "/api/v1/seeds/" + seed_id;
 
@@ -134,6 +135,9 @@ InstallResult install_seed(Http& http, const std::string& server, const std::str
             if (received - last_shown >= 512 * 1024 || received == manifest->tar_bytes) {
                 last_shown = received;
                 status("Downloading " + mb(received) + " of " + mb(manifest->tar_bytes) + "...");
+                if (progress && manifest->tar_bytes > 0) {
+                    progress(static_cast<double>(received) / static_cast<double>(manifest->tar_bytes));
+                }
             }
         });
     if (out != nullptr) {

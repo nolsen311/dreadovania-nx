@@ -6,7 +6,8 @@ randomizer seeds. It connects to a
 generate seeds, download them, and swap them in and out with one action.
 
 > **Status:** early. The app pairs with a server, lists its seeds, generates and
-> patches new ones from a preset, and installs them. A text UI for now.
+> patches new ones from a preset, and installs them, with a graphical UI
+> (see [`docs/design`](docs/design)).
 > See [`docs/PLAN.md`](docs/PLAN.md) and [ADR 0004](docs/adr/0004-phase4-plan.md).
 
 ## Planned features
@@ -35,6 +36,21 @@ patched files, checks every one, and only then replaces the previous seed (other
 mods' files are kept; it asks before replacing any). `*` marks the installed seed.
 
 Patching needs your game files on the server (its **Game files** page).
+
+The touchscreen works too in handheld mode: tap a row to select it, tap it again
+to act on it.
+
+To check the screens' layout on a computer, `tools/preview` draws each one with
+sample data and saves it as a PNG (it needs SDL2, SDL2_ttf, SDL2_gfx and
+SDL2_image, and a font file):
+
+```bash
+cmake -S tools/preview -B build-preview && cmake --build build-preview
+```
+
+```bash
+SDL_VIDEODRIVER=offscreen DREADOVANIA_FONT=/path/to/font.ttf build-preview/preview /tmp
+```
 
 The app keeps its settings in `/config/dreadovania/device.json`. If your server
 uses a certificate from your own certificate authority, copy that CA's

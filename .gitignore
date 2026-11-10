@@ -3,3 +3,4 @@ build-host/
 *.nro
 *.nacp
 *.elf
+build-preview/
