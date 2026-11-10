@@ -52,6 +52,10 @@ class Gfx {
     std::vector<std::string> wrap(std::string_view s, int size, int width, int max_lines,
                                   bool bold = false);
     int line_height(int size);
+#ifndef __SWITCH__
+    // tools/preview: saves what was drawn since clear() as a PNG.
+    bool save_png(const char* path);
+#endif
 
   private:
     TTF_Font* font(int size, bool bold);

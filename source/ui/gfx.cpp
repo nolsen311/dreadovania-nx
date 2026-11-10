@@ -4,9 +4,17 @@
 #include <SDL.h>
 #include <SDL2_gfxPrimitives.h>
 #include <SDL_ttf.h>
-#include <switch.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstdio>
+#include <vector>
+
+#ifdef __SWITCH__
+#include <switch.h>
+#else
+#include <SDL_image.h>
+#endif
 
 namespace ui {
 
@@ -38,6 +46,7 @@ std::string Gfx::init() {
     if (TTF_Init() != 0) {
         return std::string("text couldn't be drawn: ") + TTF_GetError();
     }
+#ifdef __SWITCH__
     // The console's own font: nothing to bundle, and it covers accents.
     PlFontData data{};
     if (R_FAILED(plInitialize(PlServiceType_User)) ||
@@ -46,6 +55,22 @@ std::string Gfx::init() {
     }
     font_data_ = data.address;
     font_size_ = data.size;
+#else
+    // tools/preview: a font file from the computer, named by DREADOVANIA_FONT.
+    const char* path = std::getenv("DREADOVANIA_FONT");
+    std::FILE* file = path != nullptr ? std::fopen(path, "rb") : nullptr;
+    if (file == nullptr) {
+        return "set DREADOVANIA_FONT to a .ttf or .otf file";
+    }
+    static std::vector<unsigned char> bytes;
+    int c = 0;
+    while ((c = std::fgetc(file)) != EOF) {
+        bytes.push_back(static_cast<unsigned char>(c));
+    }
+    std::fclose(file);
+    font_data_ = bytes.data();
+    font_size_ = bytes.size();
+#endif
     return "";
 }
 
@@ -59,7 +84,9 @@ void Gfx::shutdown() {
     }
     fonts_.clear();
     if (font_data_ != nullptr) {
+#ifdef __SWITCH__
         plExit();
+#endif
         font_data_ = nullptr;
     }
     TTF_Quit();
@@ -223,6 +250,22 @@ std::vector<std::string> Gfx::wrap(std::string_view s, int size, int width, int 
         while (pos <= paragraph.size()) {
             std::size_t space = paragraph.find(' ', pos);
             std::string_view word = paragraph.substr(pos, space == std::string_view::npos ? space : space - pos);
+            // A word wider than the line (a long path) is broken where it has to be.
+            while (measure(word, size, bold) > width && word.size() > 1) {
+                std::size_t cut = word.size() - 1;
+                while (cut > 1 && measure(word.substr(0, cut), size, bold) > width) {
+                    --cut;
+                }
+                while (cut > 1 && (static_cast<unsigned char>(word[cut]) & 0xC0) == 0x80) {
+                    --cut;  // not inside a UTF-8 character
+                }
+                if (!current.empty()) {
+                    lines.push_back(current);
+                    current.clear();
+                }
+                lines.emplace_back(word.substr(0, cut));
+                word.remove_prefix(cut);
+            }
             std::string candidate = current.empty() ? std::string(word) : current + " " + std::string(word);
             if (!current.empty() && measure(candidate, size, bold) > width) {
                 lines.push_back(current);
@@ -249,5 +292,20 @@ std::vector<std::string> Gfx::wrap(std::string_view s, int size, int width, int 
     }
     return lines;
 }
+
+#ifndef __SWITCH__
+bool Gfx::save_png(const char* path) {
+    SDL_Surface* surface =
+        SDL_CreateRGBSurfaceWithFormat(0, kWidth, kHeight, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (surface == nullptr) {
+        return false;
+    }
+    bool ok = SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_ARGB8888, surface->pixels,
+                                   surface->pitch) == 0 &&
+              IMG_SavePNG(surface, path) == 0;
+    SDL_FreeSurface(surface);
+    return ok;
+}
+#endif
 
 }  // namespace ui

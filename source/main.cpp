@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Dreadovania for Switch (ADR 0004): pair with a Dreadovania server, list its
-// seeds, generate and patch new ones there, and install them. A text UI for now.
+// seeds, generate and patch new ones there, and install them. Drawn with SDL2
+// (ADR 0009, docs/design).
 #include <switch.h>
 
 #include <cstdio>
@@ -16,6 +17,9 @@
 #include "http.hpp"
 #include "installer.hpp"
 #include "jobs.hpp"
+#include "ui/gfx.hpp"
+#include "ui/screens.hpp"
+#include "ui/widgets.hpp"
 
 namespace {
 
@@ -24,8 +28,6 @@ using dreadovania::PresetSummary;
 using dreadovania::SeedSummary;
 
 constexpr const char* kDeviceFile = "sdmc:/config/dreadovania/device.json";
-constexpr std::size_t kWidth = 78;  // the console is 80 columns
-constexpr std::size_t kVisibleSeeds = 30;
 
 // ---- settings on the SD card -------------------------------------------------
 
@@ -105,103 +107,229 @@ std::string console_nickname() {
     return name;
 }
 
-// ---- screens ---------------------------------------------------------------------------
+// ---- the app ----------------------------------------------------------------------------
+
+using ui::Hint;
+namespace color = ui::color;
+
+using ui::Dialog;
+using ui::Screen;
+using ui::kAsideW;
+using ui::kRowGap;
+using ui::kRowH;
+
+std::uint64_t now_ms() { return armTicksToNs(armGetSystemTick()) / 1'000'000; }
 
 class App {
   public:
     App() {
         padConfigureInput(1, HidNpadStyleSet_NpadStandard);
         padInitializeDefault(&pad_);
+        hidInitializeTouchScreen();
     }
 
-    void start() {
+    // Returns an error if the screen couldn't start.
+    std::string start() {
+        std::string error = gfx_.init();
+        if (!error.empty()) {
+            return error;
+        }
         net_error_ = http_.init();
         config_ = load_config();
-        last_server_ = config_ ? config_->server : load_last_server();
+        v_.last_server = config_ ? config_->server : load_last_server();
+        v_.screen = config_ ? Screen::Library : Screen::Pair;
         if (config_) {
+            render();  // something on screen while the list loads
             refresh();
         }
-        draw();
+        return "";
     }
 
-    // Returns false to exit.
+    // One frame. Returns false to exit.
     bool step() {
         padUpdate(&pad_);
         u64 down = padGetButtonsDown(&pad_);
         if (down & HidNpadButton_Plus) {
             return false;
         }
-        if (config_ && screen_ == Screen::Presets) {
-            presets_step(down);
-            return !quitting_;
-        }
-        if (!config_) {
-            if (down & HidNpadButton_A) {
-                pair(/*change_server=*/last_server_.empty());
-                draw();
-            } else if ((down & HidNpadButton_Y) && !last_server_.empty()) {
-                pair(/*change_server=*/true);
-                draw();
+        handle_touch();
+        if (v_.dialog != Dialog::None) {
+            dialog_step(down);
+        } else {
+            switch (v_.screen) {
+                case Screen::Pair:
+                    pair_step(down);
+                    break;
+                case Screen::Library:
+                    library_step(down);
+                    break;
+                case Screen::Presets:
+                    presets_step(down);
+                    break;
+                case Screen::Working:
+                    break;
             }
-        } else if (down & HidNpadButton_A) {
-            get_selected();
-            draw();
-        } else if (down & HidNpadButton_R) {
-            open_presets();
-            draw();
-        } else if (down & HidNpadButton_Y) {
-            refresh();
-            draw();
-        } else if (down & HidNpadButton_X) {
-            if (confirm_unpair_) {
-                unpair();
-            } else {
-                confirm_unpair_ = true;
-                message_ = "Press X again to unpair this Switch, or any other button to keep it.";
-            }
-            draw();
-        } else if (down & (HidNpadButton_AnyDown | HidNpadButton_AnyUp)) {
-            move(down & HidNpadButton_AnyDown ? 1 : -1);
-            overwrite_for_.clear();  // a replace confirmation is for one seed only
-            draw();
-        } else if (down != 0 && confirm_unpair_) {
-            confirm_unpair_ = false;
-            message_.clear();
-            draw();
         }
-        return !quitting_;
+        if (quitting_) {
+            return false;
+        }
+        render();
+        return true;
     }
 
-    void stop() { http_.shutdown(); }
+    void stop() {
+        http_.shutdown();
+        gfx_.shutdown();
+    }
 
   private:
     PadState pad_{};
+    ui::Gfx gfx_;
     app::Http http_;
     std::string net_error_;
     std::optional<DeviceConfig> config_;
-    std::vector<SeedSummary> seeds_;
-    std::size_t cursor_ = 0;
-    std::string message_;
-    bool loaded_ = false;
-    bool confirm_unpair_ = false;
-    std::string installed_;      // the seed the SD card says is installed
+    bool quitting_ = false;
+    bool touching_ = false;
+
+    ui::View v_;                 // everything the screens show
     std::string overwrite_for_;  // seed the user agreed to install over other mods' files
-    bool quitting_ = false;      // the system asked the app to close while it was waiting
+    std::uint64_t toast_until_ = 0;
 
-    enum class Screen { Seeds, Presets };
-    Screen screen_ = Screen::Seeds;
-    std::vector<PresetSummary> presets_;
-    std::size_t preset_cursor_ = 0;
-    bool race_ = false;
+    // ---- messages ---------------------------------------------------------------------
 
-    // ---- getting a seed onto the Switch -----------------------------------------------
-
-    static void show_status(const std::string& line) {
-        printf("\r%-78.78s", line.c_str());
-        consoleUpdate(nullptr);
+    void say(const std::string& text, bool bad) {
+        v_.toast = text;
+        v_.toast_bad = bad;
+        toast_until_ = now_ms() + (bad ? 9000 : 7000) + text.size() * 20;
     }
 
-    // About a second, still answering the system and the B button.
+    std::string url(const char* path) const { return config_->server + path; }
+
+    std::string explain(const app::Response& r, const char* fallback) const {
+        if (!r.error.empty()) {
+            return r.error;
+        }
+        auto detail = dreadovania::problem_detail(r.body);
+        return (detail ? *detail : std::string(fallback)) + " (HTTP " +
+               std::to_string(r.status) + ")";
+    }
+
+    // ---- input --------------------------------------------------------------------------
+
+    void move(std::size_t& cursor, std::size_t count, u64 down) {
+        if (count == 0) {
+            return;
+        }
+        if ((down & HidNpadButton_AnyDown) && cursor + 1 < count) {
+            ++cursor;
+        } else if ((down & HidNpadButton_AnyUp) && cursor > 0) {
+            --cursor;
+        }
+    }
+
+    void pair_step(u64 down) {
+        if (down & HidNpadButton_A) {
+            pair(v_.last_server.empty());
+        } else if ((down & HidNpadButton_Y) && !v_.last_server.empty()) {
+            pair(true);
+        }
+    }
+
+    void library_step(u64 down) {
+        if (down & HidNpadButton_A) {
+            get_selected();
+        } else if (down & HidNpadButton_R) {
+            open_presets();
+        } else if (down & HidNpadButton_Y) {
+            refresh();
+        } else if (down & HidNpadButton_X) {
+            v_.dialog = Dialog::Unpair;
+        } else if (down & (HidNpadButton_AnyDown | HidNpadButton_AnyUp)) {
+            std::size_t before = v_.cursor;
+            move(v_.cursor, v_.seeds.size(), down);
+            if (v_.cursor != before) {
+                overwrite_for_.clear();  // a replace confirmation is for one seed only
+            }
+        }
+    }
+
+    void presets_step(u64 down) {
+        if (down & HidNpadButton_A) {
+            new_seed();
+        } else if (down & HidNpadButton_B) {
+            v_.screen = Screen::Library;
+        } else if (down & HidNpadButton_X) {
+            v_.race = !v_.race;
+        } else {
+            move(v_.preset_cursor, v_.presets.size(), down);
+        }
+    }
+
+    void dialog_step(u64 down) {
+        if (v_.dialog == Dialog::Replace) {
+            if (down & HidNpadButton_A) {
+                v_.dialog = Dialog::None;
+                get_selected();  // overwrite_for_ is this seed: replaces the files
+            } else if (down & HidNpadButton_B) {
+                v_.dialog = Dialog::None;
+                overwrite_for_.clear();
+                say("Nothing was changed on the SD card.", false);
+            }
+        } else if (v_.dialog == Dialog::Unpair) {
+            if (down & HidNpadButton_A) {
+                v_.dialog = Dialog::None;
+                unpair();
+            } else if (down & HidNpadButton_B) {
+                v_.dialog = Dialog::None;
+            }
+        }
+    }
+
+    // Tap a row to select it; tap the selected row again to act on it.
+    void handle_touch() {
+        HidTouchScreenState state{};
+        bool touched = hidGetTouchScreenStates(&state, 1) > 0 && state.count > 0;
+        bool tapped = touched && !touching_;
+        touching_ = touched;
+        if (!tapped || v_.dialog != Dialog::None) {
+            return;
+        }
+        const int x = static_cast<int>(state.touches[0].x);
+        const int y = static_cast<int>(state.touches[0].y);
+        auto hit = [&](int left, int right, std::size_t first, std::size_t count) -> long {
+            if (x < left || x > right || y < ui::list_top()) {
+                return -1;
+            }
+            std::size_t index = first + static_cast<std::size_t>((y - ui::list_top()) / (kRowH + kRowGap));
+            return index < count ? static_cast<long>(index) : -1;
+        };
+        if (v_.screen == Screen::Library) {
+            long i = hit(kAsideW + 32, ui::Gfx::kWidth - 32, ui::first_visible(v_.cursor, v_.seeds.size()),
+                         v_.seeds.size());
+            if (i >= 0) {
+                if (static_cast<std::size_t>(i) == v_.cursor) {
+                    get_selected();
+                } else {
+                    v_.cursor = static_cast<std::size_t>(i);
+                    overwrite_for_.clear();
+                }
+            }
+        } else if (v_.screen == Screen::Presets) {
+            long i = hit(24, kAsideW - 24, ui::first_visible(v_.preset_cursor, v_.presets.size()),
+                         v_.presets.size());
+            if (i >= 0) {
+                if (static_cast<std::size_t>(i) == v_.preset_cursor) {
+                    new_seed();
+                } else {
+                    v_.preset_cursor = static_cast<std::size_t>(i);
+                }
+            }
+        }
+    }
+
+    // ---- long work: generate, patch, install ---------------------------------------------
+
+    // About a second, still drawing and answering the system and the B button.
     bool wait_a_moment() {
         for (int i = 0; i < 20; ++i) {
             if (!appletMainLoop()) {
@@ -212,48 +340,66 @@ class App {
             if (padGetButtonsDown(&pad_) & HidNpadButton_B) {
                 return false;
             }
-            consoleUpdate(nullptr);
+            render();
             svcSleepThread(50'000'000LL);
         }
         return true;
     }
 
-    void begin_work(const std::string& title) {
-        consoleClear();
-        printf("%s\n\n", title.c_str());
-        printf("Generating and patching take a minute or two on the server.\n");
-        printf("B: stop waiting (the server carries on)\n\n");
-        consoleUpdate(nullptr);
+    void begin_work(const std::string& title, std::size_t first_step) {
+        v_.work = ui::Work{};
+        v_.work.title = title;
+        v_.work.steps = {"Generate", "Patch with your game files", "Download and check", "Install"};
+        v_.work.current = first_step;
+        v_.screen = Screen::Working;
+        render();
+    }
+
+    void step_to(std::size_t index) {
+        v_.work.current = index;
+        v_.work.detail.clear();
+        v_.work.fraction = -1;
+        render();
+    }
+
+    app::Status status() {
+        return [this](const std::string& line) {
+            v_.work.detail = line;
+            render();
+        };
     }
 
     // Whatever the selected seed still needs: finish generating, patch, then install.
     void get_selected() {
-        message_.clear();
-        if (seeds_.empty()) {
-            message_ = "No seeds yet. Press R to generate one.";
+        if (v_.seeds.empty()) {
+            say("No seeds yet. Press R to generate one.", false);
             return;
         }
-        SeedSummary seed = seeds_[cursor_];
+        SeedSummary seed = v_.seeds[v_.cursor];
         if (seed.status == "failed" || seed.status == "cancelled") {
-            message_ = "This seed " + seed.status + " on the server. Press R for a new one.";
+            say("This seed " + seed.status + " on the server. Press R for a new one.", true);
             return;
         }
-        std::string verb = seed.status == "ready" && seed.mod_status == "ready" ? "Installing"
-                                                                                : "Getting";
-        begin_work(verb + " " + dreadovania::describe_seed(seed, kWidth - verb.size() - 1));
+        std::size_t first = seed.status == "pending" ? 0 : seed.mod_status == "ready" ? 2 : 1;
+        begin_work(seed.status == "ready" && seed.mod_status == "ready" ? "Installing your seed"
+                                                                         : "Getting your seed",
+                   first);
+        v_.work.seed_hash = seed.seed_hash;
         deliver(seed);
     }
 
     // Generate from the chosen preset, then patch and install.
     void new_seed() {
-        const PresetSummary& preset = presets_[preset_cursor_];
-        begin_work("New seed: " + preset.name + (race_ ? " (race)" : ""));
-        app::JobResult made = app::generate_seed(
-            http_, config_->server, config_->token, preset.id, race_, show_status,
-            [this] { return wait_a_moment(); });
-        screen_ = Screen::Seeds;
+        if (v_.presets.empty()) {
+            return;
+        }
+        const PresetSummary& preset = v_.presets[v_.preset_cursor];
+        begin_work("Getting your new seed", 0);
+        app::JobResult made = app::generate_seed(http_, config_->server, config_->token,
+                                                 preset.id, v_.race, status(),
+                                                 [this] { return wait_a_moment(); });
         if (!made.ok) {
-            finish(made.seed_id, made.message);
+            finish(made.seed_id, made.message, !made.stopped);
             return;
         }
         SeedSummary seed;
@@ -268,144 +414,110 @@ class App {
         const std::string& token = config_->token;
         if (seed.status == "pending") {
             if (seed.job_id.empty()) {
-                finish(seed.id, "This seed is still being generated. Press Y to refresh.");
+                finish(seed.id, "This seed is still being generated. Press Y to refresh.", false);
                 return;
             }
             app::JobResult made =
-                app::follow_job(http_, server, token, seed.job_id, "Generating", show_status, wait);
+                app::follow_job(http_, server, token, seed.job_id, "Generating", status(), wait);
             if (!made.ok) {
-                finish(seed.id, made.message);
+                finish(seed.id, made.message, !made.stopped);
                 return;
             }
         }
         std::string mod = seed.status == "pending" ? "" : seed.mod_status;
         if (mod != "ready") {
+            step_to(1);
             app::JobResult patched =
                 mod == "pending" && !seed.mod_job_id.empty()
-                    ? app::follow_job(http_, server, token, seed.mod_job_id, "Patching",
-                                      show_status, wait)
-                    : app::patch_seed(http_, server, token, seed.id, show_status, wait);
+                    ? app::follow_job(http_, server, token, seed.mod_job_id, "Patching", status(),
+                                      wait)
+                    : app::patch_seed(http_, server, token, seed.id, status(), wait);
             if (!patched.ok) {
-                finish(seed.id, patched.message);
+                finish(seed.id, patched.message, !patched.stopped);
                 return;
             }
         }
-        show_status("Patched. Downloading...");
-        printf("\n\nKeep the app open until it finishes.\n\n");
+        step_to(2);
         app::InstallResult result = app::install_seed(
-            http_, server, token, seed.id, overwrite_for_ == seed.id, show_status);
+            http_, server, token, seed.id, overwrite_for_ == seed.id,
+            [this](const std::string& line) {
+                if (line.rfind("Installing", 0) == 0 && v_.work.current < 3) {
+                    step_to(3);
+                }
+                v_.work.detail = line;
+                render();
+            },
+            [this](double fraction) { v_.work.fraction = fraction; });
         overwrite_for_ = result.conflicts.empty() ? "" : seed.id;
-        finish(seed.id, result.message);
+        v_.conflicts = result.conflicts;
+        finish(seed.id, result.message, !result.installed && result.conflicts.empty());
+        if (!result.conflicts.empty()) {
+            v_.dialog = Dialog::Replace;
+            v_.toast.clear();
+        }
     }
 
     // Back to the list, with the seed selected and the outcome shown.
-    void finish(const std::string& seed_id, const std::string& message) {
+    void finish(const std::string& seed_id, const std::string& message, bool bad) {
         if (quitting_) {
             return;
         }
+        v_.screen = Screen::Library;
         refresh();
-        for (std::size_t i = 0; i < seeds_.size(); ++i) {
-            if (seeds_[i].id == seed_id) {
-                cursor_ = i;
+        for (std::size_t i = 0; i < v_.seeds.size(); ++i) {
+            if (v_.seeds[i].id == seed_id) {
+                v_.cursor = i;
             }
         }
-        std::string list_problem = loaded_ ? "" : message_;  // refresh() explains a failure
-        message_ = list_problem.empty() ? message : message + "\n" + list_problem;
+        if (v_.loaded || v_.toast.empty()) {
+            say(message, bad);
+        }
     }
 
-    // ---- choosing a preset ------------------------------------------------------------
+    // ---- server calls ---------------------------------------------------------------------
 
     void open_presets() {
-        message_.clear();
         if (!net_error_.empty()) {
-            message_ = net_error_;
+            say(net_error_, true);
             return;
         }
         app::Response r = http_.request("GET", url("/api/v1/presets"), "", config_->token);
         auto presets = r.status == 200 ? dreadovania::parse_preset_list(r.body) : std::nullopt;
         if (!presets) {
-            message_ = "Couldn't load presets: " + explain(r, "unexpected answer");
+            say("Couldn't load presets: " + explain(r, "unexpected answer"), true);
             return;
         }
         if (presets->empty()) {
-            message_ = "The server has no presets yet.";
+            say("The server has no presets yet.", true);
             return;
         }
-        presets_ = std::move(*presets);
-        preset_cursor_ = std::min(preset_cursor_, presets_.size() - 1);
-        screen_ = Screen::Presets;
-    }
-
-    void presets_step(u64 down) {
-        if (down & HidNpadButton_A) {
-            new_seed();
-        } else if (down & HidNpadButton_B) {
-            screen_ = Screen::Seeds;
-        } else if (down & HidNpadButton_X) {
-            race_ = !race_;
-        } else if (down & HidNpadButton_AnyDown) {
-            preset_cursor_ = std::min(preset_cursor_ + 1, presets_.size() - 1);
-        } else if (down & HidNpadButton_AnyUp) {
-            preset_cursor_ = preset_cursor_ > 0 ? preset_cursor_ - 1 : 0;
-        } else {
-            return;
-        }
-        if (!quitting_) {
-            draw();
-        }
-    }
-
-    void draw_presets() const {
-        printf("New seed: choose a preset\n\n");
-        std::size_t first =
-            preset_cursor_ >= kVisibleSeeds ? preset_cursor_ - kVisibleSeeds + 1 : 0;
-        for (std::size_t i = first; i < presets_.size() && i < first + kVisibleSeeds; ++i) {
-            printf("%s %.*s\n", i == preset_cursor_ ? ">" : " ", static_cast<int>(kWidth - 2),
-                   presets_[i].name.c_str());
-        }
-        const std::string& about = presets_[preset_cursor_].description;
-        if (!about.empty()) {
-            printf("\n%.*s\n", static_cast<int>(kWidth * 3), about.c_str());
-        }
-        printf("\nRace seed (no spoiler on the server): %s\n", race_ ? "on" : "off");
-        printf("\nA: generate, patch and install    X: race on/off    B: back\n");
-    }
-    std::string last_server_;
-
-    std::string url(const char* path) const { return config_->server + path; }
-
-    std::string explain(const app::Response& r, const char* fallback) const {
-        if (!r.error.empty()) {
-            return r.error;
-        }
-        auto detail = dreadovania::problem_detail(r.body);
-        return (detail ? *detail : std::string(fallback)) + " (HTTP " +
-               std::to_string(r.status) + ")";
+        v_.presets = std::move(*presets);
+        v_.preset_cursor = std::min(v_.preset_cursor, v_.presets.size() - 1);
+        v_.screen = Screen::Presets;
     }
 
     void pair(bool change_server) {
-        message_.clear();
         if (!net_error_.empty()) {
-            message_ = net_error_;
+            say(net_error_, true);
             return;
         }
         dreadovania::ServerUrl server;
-        server.origin = last_server_;
-        if (change_server || last_server_.empty()) {
+        server.origin = v_.last_server;
+        if (change_server || v_.last_server.empty()) {
             auto typed = keyboard("Server address", "https://dread.example.com",
-                                  last_server_.empty() ? "https://" : last_server_, 200);
+                                  v_.last_server.empty() ? "https://" : v_.last_server, 200);
             if (!typed) {
                 return;
             }
             server = dreadovania::normalize_server_url(*typed);
             if (!server.origin) {
-                message_ = "Not paired: " + server.error + ".";
+                say("Not paired: " + server.error + ".", true);
                 return;
             }
-            last_server_ = *server.origin;
-            save_last_server(last_server_);  // remembered even if pairing fails
+            v_.last_server = *server.origin;
+            save_last_server(v_.last_server);  // remembered even if pairing fails
+            render();
         }
-        // 8 letters and numbers; the dash shown on the server is optional.
         auto typed_code = keyboard("Pairing code (8 letters and numbers, no dash needed)",
                                    "From the server: Account > Switch app > Pair a Switch", "", 9);
         if (!typed_code) {
@@ -413,145 +525,111 @@ class App {
         }
         auto code = dreadovania::normalize_pairing_code(*typed_code);
         if (!code) {
-            message_ = "Not paired: the code is 8 letters and numbers, like ABCDEFGH.";
+            v_.typed_code.clear();
+            say("Not paired: the code is 8 letters and numbers, like ABCDEFGH.", true);
             return;
         }
-        std::string name = console_nickname();
-        printf("\nPairing with %s ...\n", server.origin->c_str());
-        consoleUpdate(nullptr);
+        v_.typed_code = *code;
+        say("Pairing...", false);
+        render();
         app::Response r = http_.request("POST", *server.origin + "/api/v1/devices/pair",
-                                        dreadovania::pair_request_body(*code, name));
+                                        dreadovania::pair_request_body(*code, console_nickname()));
         auto paired = r.status == 201 ? dreadovania::parse_paired(r.body) : std::nullopt;
         if (!paired) {
-            message_ = "Not paired: " + explain(r, "the server refused the code");
+            say("Not paired: " + explain(r, "the server refused the code"), true);
             return;
         }
         DeviceConfig config{*server.origin, paired->device_id, paired->name, paired->token};
         if (!save_config(config)) {
-            message_ = "Paired, but the settings couldn't be saved to the SD card.";
+            say("Paired, but the settings couldn't be saved to the SD card.", true);
             return;
         }
         config_ = config;
-        message_ = "Paired as \"" + paired->name + "\".";
+        v_.typed_code.clear();
+        v_.screen = Screen::Library;
         refresh();
+        say("Paired as \"" + paired->name + "\".", false);
     }
 
     void refresh() {
-        loaded_ = false;
+        v_.loaded = false;
         if (!net_error_.empty()) {
-            message_ = net_error_;
+            say(net_error_, true);
             return;
         }
         app::Response r = http_.request("GET", url("/api/v1/seeds?limit=50"), "", config_->token);
         if (r.status == 401) {
-            last_server_ = config_->server;
-            save_last_server(last_server_);
+            v_.last_server = config_->server;
+            save_last_server(v_.last_server);
             forget_config();
             config_.reset();
-            message_ = "This Switch was removed on the server. Pair it again.";
+            v_.screen = Screen::Pair;
+            say("This Switch was removed on the server. Pair it again.", true);
             return;
         }
         auto seeds = r.status == 200 ? dreadovania::parse_seed_list(r.body) : std::nullopt;
         if (!seeds) {
-            message_ = "Couldn't load seeds: " + explain(r, "unexpected answer");
+            say("Couldn't load seeds: " + explain(r, "unexpected answer"), true);
             return;
         }
-        seeds_ = std::move(*seeds);
-        cursor_ = seeds_.empty() ? 0 : std::min(cursor_, seeds_.size() - 1);
-        loaded_ = true;
-        installed_ = app::installed_seed().value_or("");
+        v_.seeds = std::move(*seeds);
+        v_.cursor = v_.seeds.empty() ? 0 : std::min(v_.cursor, v_.seeds.size() - 1);
+        v_.loaded = true;
+        v_.installed = app::installed_seed().value_or("");
     }
 
     void unpair() {
-        confirm_unpair_ = false;
         // Tell the server first; forget the token here whatever it answers.
         http_.request("DELETE", url("/api/v1/devices/me"), "", config_->token);
-        last_server_ = config_->server;
-        save_last_server(last_server_);
+        v_.last_server = config_->server;
+        save_last_server(v_.last_server);
         forget_config();
         config_.reset();
-        seeds_.clear();
-        message_ = "Unpaired. Press A to pair again.";
+        v_.seeds.clear();
+        v_.screen = Screen::Pair;
+        say("Unpaired. Press A to pair again.", false);
     }
 
-    void move(int delta) {
-        if (seeds_.empty()) {
-            return;
-        }
-        if (delta > 0 && cursor_ + 1 < seeds_.size()) {
-            ++cursor_;
-        } else if (delta < 0 && cursor_ > 0) {
-            --cursor_;
-        }
-    }
+    // ---- drawing ------------------------------------------------------------------------
 
-    void draw() const {
-        consoleClear();
-        std::string version(dreadovania::kVersion);
-        printf("Dreadovania %s\n", version.c_str());
-        printf("%s\n\n", std::string(kWidth, '-').c_str());
-        if (config_ && screen_ == Screen::Presets) {
-            draw_presets();
-            return;
-        }
-        if (!config_) {
-            printf("Not paired with a server yet.\n\n");
-            if (!last_server_.empty()) {
-                printf("Server: %s\n\n", last_server_.c_str());
-            }
-            printf("1. On your server, open Account > Switch app > Pair a Switch.\n");
-            printf("2. Press A here, then enter the code%s.\n\n",
-                   last_server_.empty() ? " (and the server's address first)" : "");
-            printf("The server must use HTTPS (see its docs/https.md).\n");
-            switch (http_.user_ca()) {
-                case dreadovania::UserCa::Loaded:
-                    printf("Your own CA (/config/dreadovania/ca.pem) is trusted too.\n");
-                    break;
-                case dreadovania::UserCa::NotPem:
-                    printf("/config/dreadovania/ca.pem isn't a PEM certificate: ignored.\n");
-                    break;
-                case dreadovania::UserCa::Missing:
-                    break;
-            }
-        } else {
-            printf("Server: %s\n\n", config_->server.c_str());
-            if (loaded_ && seeds_.empty()) {
-                printf("No seeds yet. Press R to generate one.\n");
-            }
-            std::size_t first = cursor_ >= kVisibleSeeds ? cursor_ - kVisibleSeeds + 1 : 0;
-            for (std::size_t i = first; i < seeds_.size() && i < first + kVisibleSeeds; ++i) {
-                std::string line = dreadovania::describe_seed(seeds_[i], kWidth - 4);
-                printf("%s %s %s\n", i == cursor_ ? ">" : " ",
-                       seeds_[i].id == installed_ ? "*" : " ", line.c_str());
-            }
-        }
-        if (!message_.empty()) {
-            printf("\n%s\n", message_.c_str());
-        }
-        printf("\n%s\n", std::string(kWidth, '-').c_str());
-        if (!config_) {
-            printf(last_server_.empty() ? "A: pair    +: exit\n"
-                                        : "A: pair    Y: change server    +: exit\n");
-        } else {
-            printf("A: install    R: new seed    Up/Down: choose    Y: refresh    X: unpair\n");
-            printf("+: exit    * = installed on this Switch\n");
-        }
+    void render() {
+        v_.server = config_ ? config_->server : "";
+        v_.connected = config_.has_value() && v_.loaded;
+        v_.user_ca = http_.user_ca();
+        v_.show_toast = now_ms() < toast_until_;
+        ui::draw(gfx_, v_);
+        gfx_.present();
     }
 };
 
 }  // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
-    consoleInit(nullptr);
     App app;
-    app.start();
+    std::string error = app.start();
+    if (!error.empty()) {
+        // No screen to draw on: fall back to libnx's console for the reason.
+        consoleInit(nullptr);
+        printf("Dreadovania couldn't start: %s\n\nPress + to exit.\n", error.c_str());
+        PadState pad;
+        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+        padInitializeDefault(&pad);
+        while (appletMainLoop()) {
+            padUpdate(&pad);
+            if (padGetButtonsDown(&pad) & HidNpadButton_Plus) {
+                break;
+            }
+            consoleUpdate(nullptr);
+        }
+        consoleExit(nullptr);
+        app.stop();
+        return 1;
+    }
     while (appletMainLoop()) {
         if (!app.step()) {
             break;
         }
-        consoleUpdate(nullptr);
     }
     app.stop();
-    consoleExit(nullptr);
     return 0;
 }
