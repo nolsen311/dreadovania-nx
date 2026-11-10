@@ -339,4 +339,86 @@ std::optional<std::string> problem_detail(std::string_view body) {
     return parsed.value->string_at("title");
 }
 
+SeedState seed_state(const SeedSummary& seed, bool installed) {
+    if (installed) {
+        return {"Installed", Tone::Accent};
+    }
+    if (seed.status == "pending") {
+        return {"Generating", Tone::Wait};
+    }
+    if (seed.status == "failed" || seed.status == "cancelled") {
+        return {seed.status == "failed" ? "Failed" : "Cancelled", Tone::Bad};
+    }
+    if (seed.mod_status == "ready") {
+        return {"Patched", Tone::Ok};
+    }
+    if (seed.mod_status == "pending") {
+        return {"Patching", Tone::Wait};
+    }
+    if (seed.mod_status == "failed") {
+        return {"Patch failed", Tone::Bad};
+    }
+    return {"Not patched", Tone::Muted};
+}
+
+std::string short_date(std::string_view iso) {
+    static constexpr const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    if (iso.size() < 10 || iso[4] != '-' || iso[7] != '-') {
+        return "";
+    }
+    auto digits = [&](std::size_t at) {
+        return std::isdigit(static_cast<unsigned char>(iso[at])) &&
+               std::isdigit(static_cast<unsigned char>(iso[at + 1]));
+    };
+    if (!digits(5) || !digits(8)) {
+        return "";
+    }
+    int month = (iso[5] - '0') * 10 + (iso[6] - '0');
+    int day = (iso[8] - '0') * 10 + (iso[9] - '0');
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+        return "";
+    }
+    return std::string(kMonths[month - 1]) + " " + std::to_string(day);
+}
+
+std::string plain_text(std::string_view html) {
+    std::string out;
+    for (std::size_t i = 0; i < html.size();) {
+        if (html[i] == '<') {
+            std::size_t end = html.find('>', i);
+            if (end == std::string_view::npos) {
+                break;
+            }
+            std::string tag = lower(html.substr(i + 1, end - i - 1));
+            if (tag.rfind("br", 0) == 0 || tag == "/p") {
+                out += '\n';
+            }
+            i = end + 1;
+            continue;
+        }
+        if (html[i] == '&') {
+            static constexpr std::pair<std::string_view, char> kEntities[] = {
+                {"&amp;", '&'}, {"&lt;", '<'}, {"&gt;", '>'}, {"&quot;", '"'}, {"&#39;", '\''}};
+            bool done = false;
+            for (const auto& [name, ch] : kEntities) {
+                if (html.substr(i, name.size()) == name) {
+                    out += ch;
+                    i += name.size();
+                    done = true;
+                    break;
+                }
+            }
+            if (done) {
+                continue;
+            }
+        }
+        out += html[i++];
+    }
+    while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) {
+        out.pop_back();
+    }
+    return out;
+}
+
 }  // namespace dreadovania

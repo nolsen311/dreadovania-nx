@@ -55,6 +55,21 @@ struct SeedSummary {
 };
 std::optional<std::vector<SeedSummary>> parse_seed_list(std::string_view body);
 
+// The chip on a seed's row: its words and its colour family.
+enum class Tone { Muted, Ok, Wait, Bad, Accent };
+struct SeedState {
+    std::string label;
+    Tone tone;
+};
+SeedState seed_state(const SeedSummary& seed, bool installed);
+
+// "2026-11-09T20:00:00+00:00" -> "Nov 9"; "" if it isn't a date.
+std::string short_date(std::string_view iso);
+
+// A preset description as plain text: Randovania's <br/> become new lines,
+// other tags are dropped and &amp; &lt; &gt; &quot; &#39; are decoded.
+std::string plain_text(std::string_view html);
+
 // One line for the seed list, at most `width` characters.
 std::string describe_seed(const SeedSummary& seed, std::size_t width);
 

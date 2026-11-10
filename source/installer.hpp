@@ -21,7 +21,8 @@ struct InstallResult {
 
 InstallResult install_seed(Http& http, const std::string& server, const std::string& token,
                            const std::string& seed_id, bool overwrite,
-                           const std::function<void(const std::string&)>& status);
+                           const std::function<void(const std::string&)>& status,
+                           const std::function<void(double)>& progress = {});  // 0..1, downloading
 
 // The seed the SD card says is installed, if any.
 std::optional<std::string> installed_seed();
