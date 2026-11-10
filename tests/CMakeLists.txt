@@ -16,8 +16,8 @@ set(SANITIZE -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-
 target_compile_options(dreadovania_core PRIVATE ${WARNINGS} ${SANITIZE})
 
 add_executable(core_tests main.cpp test_paths.cpp test_json.cpp test_api.cpp test_install.cpp
-               test_installer.cpp ../source/installer.cpp)
-# source/installer.cpp with tests/fake/http.hpp standing in for the network.
+               test_installer.cpp test_jobs.cpp ../source/installer.cpp ../source/jobs.cpp)
+# source/installer.cpp and source/jobs.cpp with tests/fake/http.hpp standing in for the network.
 target_include_directories(core_tests PRIVATE fake ../source)
 target_link_libraries(core_tests PRIVATE dreadovania_core)
 target_compile_options(core_tests PRIVATE ${WARNINGS} ${SANITIZE})

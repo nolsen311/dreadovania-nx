@@ -9,6 +9,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace app {
 
@@ -22,9 +23,11 @@ class Http {
   public:
     std::map<std::string, Response> routes;  // URL -> answer
     std::size_t chunk = 1000;
+    std::vector<std::string> calls;  // "METHOD url body", in order
 
-    Response request(std::string_view, const std::string& url, const std::string& = "",
+    Response request(std::string_view method, const std::string& url, const std::string& body = "",
                      const std::string& = "") {
+        calls.push_back(std::string(method) + " " + url + (body.empty() ? "" : " " + body));
         auto it = routes.find(url);
         return it == routes.end() ? Response{404, "{\"detail\": \"not found\"}", ""} : it->second;
     }
