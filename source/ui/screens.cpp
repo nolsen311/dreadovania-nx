@@ -135,8 +135,11 @@ static void draw_library(Gfx& g, const View& v) {
         g.text(meta, x + 20, y + 44, ui::kSmall, color::muted, false, ui::Align::Left, text_w);
     }
     std::string count = !v.loaded ? "Loading..." : std::to_string(v.seeds.size()) + " seeds";
+    if (!v.server_note.empty()) {
+        count += "  ·  " + v.server_note;
+    }
     std::vector<ui::Hint> hints = {{"A", "Install"}, {"R", "New seed"}, {"Y", "Refresh"},
-                                   {"X", "Unpair"}, {"+", "Exit"}};
+                                   {"L", "Servers"}, {"+", "Exit"}};
     if (!v.update_version.empty() || v.update_required) {
         hints.insert(hints.begin(), {"-", "Update"});
     }
@@ -193,6 +196,93 @@ static void draw_presets(Gfx& g, const View& v) {
     }
     ui::footer(g, "Presets are edited on the server",
                {{"A", "Generate and install"}, {"X", "Race on/off"}, {"B", "Back"}});
+}
+
+static std::string bare(const std::string& address) {
+    return address.rfind("https://", 0) == 0 ? address.substr(8) : address;
+}
+
+static std::string joined(const std::vector<std::string>& names) {
+    std::string out;
+    for (const std::string& n : names) {
+        out += (out.empty() ? "" : ", ") + n;
+    }
+    return out;
+}
+
+// The paired servers (ADR 0010): switch, link this network, pair another, unpair.
+static void draw_servers(Gfx& g, const View& v) {
+    const int x = 24;
+    const int w = kAsideW - 48;
+    ui::section_title(g, x, ui::kHeader + 24, "Servers");
+    std::size_t first = first_visible(v.server_cursor, v.servers.size());
+    for (std::size_t i = first; i < v.servers.size() && i < first + visible_rows(); ++i) {
+        const ServerRow& s = v.servers[i];
+        int y = kListTop + static_cast<int>(i - first) * (kRowH + kRowGap);
+        ui::row_box(g, x, y, w, kRowH, i == v.server_cursor);
+        g.text(bare(s.address), x + 20, y + 14, ui::kBody, color::fg, true, ui::Align::Left,
+               w - 40);
+        bool here = !v.network.empty() &&
+                    std::find(s.networks.begin(), s.networks.end(), v.network) != s.networks.end();
+        std::string meta = s.in_use ? "In use" : here ? "Linked to this network" : "";
+        if (meta.empty()) {
+            meta = s.networks.empty() ? "No networks linked" : joined(s.networks);
+        }
+        g.text(meta, x + 20, y + 44, ui::kSmall, s.in_use ? color::ok : color::muted, false,
+               ui::Align::Left, w - 40);
+    }
+    g.box(kAsideW, ui::kHeader, 1, ui::Gfx::kHeight - ui::kHeader - ui::kFooter, 0,
+          color::line);
+    const int rx = kAsideW + 32;
+    const int rw = ui::Gfx::kWidth - rx - 32;
+    int y = ui::kHeader + 24;
+    ui::section_title(g, rx, y, "This network");
+    y += 36;
+    g.framed(rx, y, rw, 88, 14, 1, color::line, color::panel);
+    g.text(v.network.empty() ? "Not connected, or the network can't be read" : v.network,
+           rx + 20, y + 16, ui::kBody, color::fg, true, ui::Align::Left, rw - 40);
+    std::string linked_to;
+    for (const ServerRow& s : v.servers) {
+        if (std::find(s.networks.begin(), s.networks.end(), v.network) != s.networks.end()) {
+            linked_to = bare(s.address);
+        }
+    }
+    g.text(v.network.empty() ? "The app uses the server you used last."
+           : linked_to.empty() ? "Not linked: the app uses the server you used last."
+                               : "Linked to " + linked_to,
+           rx + 20, y + 50, ui::kSmall, color::muted, false, ui::Align::Left, rw - 40);
+    y += 88 + 40;
+    if (v.servers.empty()) {
+        ui::footer(g, "", {{"Y", "Pair a server"}, {"B", "Back"}});
+        return;
+    }
+    const ServerRow& s = v.servers[std::min(v.server_cursor, v.servers.size() - 1)];
+    ui::section_title(g, rx, y, bare(s.address));
+    y += 36;
+    int h = 18 + 30 + 30 + 18;
+    g.framed(rx, y, rw, h, 14, 1, color::line, color::panel);
+    g.text("Paired as " + (s.name.empty() ? std::string("this Switch") : s.name), rx + 20,
+           y + 18, ui::kSmall, color::fg, false, ui::Align::Left, rw - 40);
+    g.text(s.networks.empty() ? "No networks linked yet" : "Networks: " + joined(s.networks),
+           rx + 20, y + 48, ui::kSmall, color::muted, false, ui::Align::Left, rw - 40);
+    y += h + 16;
+    for (const std::string& line :
+         g.wrap("Link this network to a server, and the app uses that server whenever the "
+                "Switch is on it.",
+                ui::kSmall, rw, 3)) {
+        g.text(line, rx, y, ui::kSmall, color::muted);
+        y += g.line_height(ui::kSmall);
+    }
+    bool here = !v.network.empty() &&
+                std::find(s.networks.begin(), s.networks.end(), v.network) != s.networks.end();
+    std::vector<ui::Hint> hints = {{"A", s.in_use ? "Back to seeds" : "Use it"}};
+    if (!v.network.empty()) {
+        hints.push_back({"X", here ? "Unlink this network" : "Link this network"});
+    }
+    hints.push_back({"Y", "Pair another"});
+    hints.push_back({"R", "Unpair"});
+    hints.push_back({"B", "Back"});
+    ui::footer(g, std::to_string(v.servers.size()) + " paired", hints);
 }
 
 static void draw_working(Gfx& g, const View& v) {
@@ -313,7 +403,7 @@ static void draw_pair(Gfx& g, const View& v) {
     if (!v.last_server.empty()) {
         hints.push_back({"Y", "Change server"});
     }
-    hints.push_back({"+", "Exit"});
+    hints.push_back(v.pairing_another ? ui::Hint{"B", "Back"} : ui::Hint{"+", "Exit"});
     ui::footer(g, "", hints);
 }
 
@@ -337,6 +427,9 @@ void draw(Gfx& g, const View& v) {
         case Screen::Working:
             draw_working(g, v);
             break;
+        case Screen::Servers:
+            draw_servers(g, v);
+            break;
     }
     if (v.dialog == Dialog::Replace) {
         std::string example = v.conflicts.empty() ? "" : v.conflicts.front();
@@ -350,9 +443,10 @@ void draw(Gfx& g, const View& v) {
                     "If they're from a seed you copied by hand, that's fine."},
                    {{"B", "Keep them"}, {"A", "Replace and install"}});
     } else if (v.dialog == Dialog::Unpair) {
-        ui::dialog(g, "Unpair this Switch?",
-                   {"It will stop reaching your seeds until you pair it again with a new "
-                    "code. Installed seeds stay on the SD card."},
+        ui::dialog(g, "Unpair from this server?",
+                   {bare(v.unpair_target),
+                    "This Switch will stop reaching that server's seeds until you pair it "
+                    "again with a new code. Installed seeds stay on the SD card."},
                    {{"B", "Keep it"}, {"A", "Unpair"}});
     } else if (v.show_toast && !v.toast.empty()) {
         ui::toast(g, v.toast, v.toast_bad ? color::bad : color::ok);

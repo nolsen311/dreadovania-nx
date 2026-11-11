@@ -124,6 +124,31 @@ int main(int argc, char** argv) {
     ui::View unpaired;
     shot("8-first-run", unpaired);
 
+    // Several servers (ADR 0010).
+    ui::View servers = library();
+    servers.screen = ui::Screen::Servers;
+    servers.network = "Olsen Home 5G";
+    servers.servers = {
+        {"https://dread.home.example.com", "Nate's OG Switch", {"Olsen Home 5G", "Olsen Home"}, true},
+        {"https://dread.friend.example.net:8443", "Nate's OG Switch", {}, false},
+    };
+    shot("12-servers", servers);
+    servers.server_cursor = 1;
+    servers.network = "Cafe Guest";
+    shot("12b-servers-other-network", servers);
+    ui::View dialog = servers;
+    dialog.dialog = ui::Dialog::Unpair;
+    dialog.unpair_target = "https://dread.friend.example.net:8443";
+    shot("12c-unpair-a-server", dialog);
+
+    ui::View not_linked = library();
+    not_linked.server_note = "Not linked to Cafe Guest";
+    shot("13-library-not-linked", not_linked);
+
+    ui::View another;
+    another.pairing_another = true;
+    shot("14-pair-another", another);
+
     g.shutdown();
     return failures == 0 ? 0 : 1;
 }

@@ -192,6 +192,9 @@ class App {
                 case Screen::Presets:
                     presets_step(down);
                     break;
+                case Screen::Servers:
+                    servers_step(down);
+                    break;
                 case Screen::Working:
                     break;
             }
@@ -259,6 +262,10 @@ class App {
     }
 
     void pair_step(u64 down) {
+        if ((down & HidNpadButton_B) && v_.pairing_another) {
+            open_servers();  // back without pairing
+            return;
+        }
         if (down & HidNpadButton_A) {
             pair(v_.last_server.empty());
         } else if ((down & HidNpadButton_Y) && !v_.last_server.empty()) {
@@ -286,8 +293,8 @@ class App {
             open_presets();
         } else if (down & HidNpadButton_Y) {
             refresh();
-        } else if (down & HidNpadButton_X) {
-            v_.dialog = Dialog::Unpair;
+        } else if (down & HidNpadButton_L) {
+            open_servers();
         } else if (down & (HidNpadButton_AnyDown | HidNpadButton_AnyUp)) {
             std::size_t before = v_.cursor;
             move(v_.cursor, v_.seeds.size(), down);
@@ -322,7 +329,11 @@ class App {
         } else if (v_.dialog == Dialog::Unpair) {
             if (down & HidNpadButton_A) {
                 v_.dialog = Dialog::None;
-                unpair();
+                if (config_ && v_.unpair_target == config_->server) {
+                    unpair();
+                } else {
+                    unpair_other(v_.unpair_target);
+                }
             } else if (down & HidNpadButton_B) {
                 v_.dialog = Dialog::None;
             }
@@ -618,6 +629,8 @@ class App {
         servers_ = std::move(updated);
         config_ = servers_.servers[index];
         v_.typed_code.clear();
+        v_.pairing_another = false;
+        v_.server_note.clear();
         v_.screen = Screen::Library;
         refresh();
         say("Paired as \"" + paired->name + "\".", false);
@@ -705,6 +718,112 @@ class App {
         } else {
             say("Unpaired. Press A to pair again.", false);
         }
+    }
+
+    // ---- the Servers screen (ADR 0010) -------------------------------------------------
+
+    void open_servers() {
+        network_ = app::current_network();
+        sync_servers_view();
+        v_.server_cursor = 0;
+        for (std::size_t i = 0; i < v_.servers.size(); ++i) {
+            if (v_.servers[i].in_use) {
+                v_.server_cursor = i;
+            }
+        }
+        v_.pairing_another = false;
+        v_.screen = Screen::Servers;
+    }
+
+    void sync_servers_view() {
+        v_.servers.clear();
+        for (const PairedServer& s : servers_.servers) {
+            v_.servers.push_back({s.server, s.name, s.networks, config_ && config_->server == s.server});
+        }
+        v_.network = network_;
+        if (!v_.servers.empty()) {
+            v_.server_cursor = std::min(v_.server_cursor, v_.servers.size() - 1);
+        }
+    }
+
+    void servers_step(u64 down) {
+        if (down & HidNpadButton_B) {
+            v_.screen = config_ ? Screen::Library : Screen::Pair;
+        } else if (down & HidNpadButton_Y) {
+            v_.pairing_another = true;
+            v_.last_server.clear();  // a new address
+            v_.typed_code.clear();
+            v_.screen = Screen::Pair;
+        } else if (servers_.servers.empty()) {
+            return;
+        } else if (down & HidNpadButton_A) {
+            use_server(v_.server_cursor);
+        } else if (down & HidNpadButton_X) {
+            toggle_link(v_.server_cursor);
+        } else if (down & HidNpadButton_R) {
+            v_.unpair_target = servers_.servers[v_.server_cursor].server;
+            v_.dialog = Dialog::Unpair;
+        } else {
+            move(v_.server_cursor, servers_.servers.size(), down);
+        }
+    }
+
+    // Switch to a server by hand. It stays in use until the network changes.
+    void use_server(std::size_t index) {
+        const PairedServer& chosen = servers_.servers[index];
+        bool changed = !config_ || config_->server != chosen.server;
+        dreadovania::mark_used(servers_, index);
+        save_servers(servers_);
+        config_ = servers_.servers[index];
+        picked_on_ = network_;
+        bool here = dreadovania::linked_server(servers_, network_) == index;
+        v_.server_note = here || servers_.servers.size() < 2 || network_.empty()
+                             ? ""
+                             : "Not linked to " + network_;
+        v_.screen = Screen::Library;
+        if (changed) {
+            v_.seeds.clear();
+            refresh();
+            say("Using " + config_->server + ".", false);
+        }
+    }
+
+    void toggle_link(std::size_t index) {
+        if (network_.empty()) {
+            say("The Switch isn't connected to a network it can name.", true);
+            return;
+        }
+        bool linked = dreadovania::linked_server(servers_, network_) == index;
+        if (linked) {
+            dreadovania::unlink_network(servers_, index, network_);
+        } else {
+            dreadovania::link_network(servers_, index, network_);
+        }
+        if (!save_servers(servers_)) {
+            say("The settings couldn't be saved to the SD card.", true);
+            return;
+        }
+        if (config_ && config_->server == servers_.servers[index].server) {
+            config_->networks = servers_.servers[index].networks;
+            v_.server_note.clear();
+        }
+        sync_servers_view();
+        say(linked ? network_ + " is no longer linked to a server."
+                   : network_ + " now uses " + servers_.servers[index].server + ".",
+            false);
+    }
+
+    // Unpair a server that isn't the one in use: tell it, then forget its token.
+    void unpair_other(const std::string& origin) {
+        for (const PairedServer& s : servers_.servers) {
+            if (s.server == origin) {
+                http_.request("DELETE", s.server + "/api/v1/devices/me", "", s.token);
+            }
+        }
+        dreadovania::forget_server(servers_, origin);
+        save_servers(servers_);
+        sync_servers_view();
+        say("Unpaired from " + origin + ".", false);
     }
 
     // Forget the server in use (unpaired, or removed on the server). Another
