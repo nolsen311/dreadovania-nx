@@ -33,9 +33,8 @@ void logo(Gfx& g, int x, int y, int size) {
                static_cast<int>(cx + r * std::cos(a2)), static_cast<int>(cy + r * std::sin(a2)),
                3, color::accent);
     }
-    int h = g.line_height(size / 2);
-    g.text("D", static_cast<int>(cx), static_cast<int>(cy) - h / 2, size / 2, color::fg, true,
-           Align::Center);
+    g.text("D", static_cast<int>(cx), g.top_for_center(static_cast<int>(cy), size / 2, true),
+           size / 2, color::fg, true, Align::Center);
 }
 
 void header(Gfx& g, const std::string& right, bool connected) {
@@ -52,7 +51,7 @@ int glyph(Gfx& g, int x, int cy, const std::string& label) {
     int tw = g.measure(label, 17, true);
     int w = label.size() <= 1 ? 30 : tw + 20;
     g.box(x, cy - 15, w, 30, 15, color::fg);
-    g.text(label, x + w / 2, cy - 11, 17, color::bg, true, Align::Center);
+    g.text(label, x + w / 2, g.top_for_center(cy, 17, true), 17, color::bg, true, Align::Center);
     return w;
 }
 
@@ -60,12 +59,13 @@ void footer(Gfx& g, const std::string& left, const std::vector<Hint>& hints) {
     int top = Gfx::kHeight - kFooter;
     g.box(0, top, Gfx::kWidth, 1, 0, color::line);
     int cy = top + kFooter / 2;
-    g.text(left, 32, cy - 12, kSmall + 1, color::muted, false, Align::Left, 420);
+    const int label_top = g.top_for_center(cy, kSmall + 1);
+    g.text(left, 32, label_top, kSmall + 1, color::muted, false, Align::Left, 420);
     int x = Gfx::kWidth - 32;
     for (auto it = hints.rbegin(); it != hints.rend(); ++it) {
         int label_w = g.measure(it->second, kSmall + 1);
         x -= label_w;
-        g.text(it->second, x, cy - 12, kSmall + 1, color::fg);
+        g.text(it->second, x, label_top, kSmall + 1, color::fg);
         int gw = it->first.size() <= 1 ? 30 : g.measure(it->first, 17, true) + 20;
         x -= gw + 8;
         glyph(g, x, cy, it->first);
@@ -80,7 +80,7 @@ int chip(Gfx& g, int right, int cy, const std::string& label, Color c) {
     }
     int w = g.measure(upper, 15, true) + 28;
     g.framed(right - w, cy - 16, w, 32, 16, 2, c, color::panel);
-    g.text(upper, right - w / 2, cy - 10, 15, c, true, Align::Center);
+    g.text(upper, right - w / 2, g.top_for_center(cy, 15, true), 15, c, true, Align::Center);
     return w;
 }
 
@@ -152,7 +152,8 @@ void dialog(Gfx& g, const std::string& title, const std::vector<std::string>& li
             g.framed(bx, by, bw, 52, 12, 2, color::line, color::panel);
         }
         glyph(g, bx + 26, by + 26, it->first);
-        g.text(it->second, bx + 26 + 30 + 10, by + 12, kBody, primary ? color::white : color::fg, true);
+        g.text(it->second, bx + 26 + 30 + 10, g.top_for_center(by + 26, kBody, true), kBody,
+               primary ? color::white : color::fg, true);
         bx -= 16;
     }
 }

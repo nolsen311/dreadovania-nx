@@ -52,6 +52,10 @@ class Gfx {
     std::vector<std::string> wrap(std::string_view s, int size, int width, int max_lines,
                                   bool bold = false);
     int line_height(int size);
+    // The y to draw text at so its capital letters are centred on `cy`, from the
+    // font's own metrics: fonts differ (the Switch's system font sits lower in its
+    // line than most), so fixed offsets don't line up everywhere.
+    int top_for_center(int cy, int size, bool bold = false);
 #ifndef __SWITCH__
     // tools/preview: saves what was drawn since clear() as a PNG.
     bool save_png(const char* path);

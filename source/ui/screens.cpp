@@ -173,12 +173,14 @@ static void draw_working(Gfx& g, const View& v) {
             ui::check_mark(g, x + 22, cy, color::bg);
         } else {
             g.ring(x + 22, cy, 22, 3, now ? color::accent : color::line, color::bg);
-            g.text(std::to_string(i + 1), x + 22, cy - 15, ui::kBody, now ? color::accent : color::muted,
-                      true, ui::Align::Center);
+            g.text(std::to_string(i + 1), x + 22, g.top_for_center(cy, ui::kBody, true), ui::kBody,
+                   now ? color::accent : color::muted, true, ui::Align::Center);
         }
-        g.text(v.work.steps[i], x + 64, cy - 16, 24, done || now ? color::fg : color::muted);
+        g.text(v.work.steps[i], x + 64, g.top_for_center(cy, 24), 24,
+               done || now ? color::fg : color::muted);
         std::string side = now ? v.work.detail : (i == 0 && done ? v.work.seed_hash : "");
-        g.text(side, x + w, cy - 12, ui::kSmall, color::muted, false, ui::Align::Right, 520);
+        g.text(side, x + w, g.top_for_center(cy, ui::kSmall), ui::kSmall, color::muted, false,
+               ui::Align::Right, 520);
         y += 62;
     }
     y += 10;
@@ -245,7 +247,8 @@ static void draw_pair(Gfx& g, const View& v) {
               ui::Align::Left, rw - 200);
     if (!v.last_server.empty()) {
         int cw = g.measure("Change", ui::kSmall + 1);
-        g.text("Change", rx + rw - 20 - cw, ry + 22, ui::kSmall + 1, color::fg);
+        g.text("Change", rx + rw - 20 - cw, g.top_for_center(ry + 34, ui::kSmall + 1), ui::kSmall + 1,
+               color::fg);
         ui::glyph(g, rx + rw - 20 - cw - 38, ry + 34, "Y");
     }
     ry += 68 + 36;
@@ -261,8 +264,8 @@ static void draw_pair(Gfx& g, const View& v) {
         bool next = i == v.typed_code.size();
         g.framed(bx, ry, 64, 84, 12, 2, next ? color::accent : color::line, color::panel);
         if (filled) {
-            g.text(std::string(1, v.typed_code[i]), bx + 32, ry + 16, 40, color::fg, true,
-                      ui::Align::Center);
+            g.text(std::string(1, v.typed_code[i]), bx + 32, g.top_for_center(ry + 42, 40, true), 40,
+                   color::fg, true, ui::Align::Center);
         }
         bx += 76;
     }
