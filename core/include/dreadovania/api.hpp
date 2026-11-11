@@ -3,6 +3,7 @@
 // docs/openapi.json, ADR 0017), and its settings file on the SD card.
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -62,6 +63,17 @@ struct SeedState {
     Tone tone;
 };
 SeedState seed_state(const SeedSummary& seed, bool installed);
+
+// Dread's program ID: its mod folder is atmosphere/contents/010093801237c000.
+inline constexpr std::uint64_t kDreadProgramId = 0x010093801237C000ULL;
+
+// Why installing now would be unsafe, or nothing. The app runs either as the
+// application (title takeover: no game runs alongside it) or as an applet
+// (from the Album), where a suspended game may be running. If that game is
+// Dread, its mod files are in use: replacing them could leave a half-installed
+// seed or crash it when it resumes.
+std::optional<std::string> install_blocker(bool app_is_application,
+                                           std::optional<std::uint64_t> running_program);
 
 // "2026-11-09T20:00:00+00:00" -> "Nov 9"; "" if it isn't a date.
 std::string short_date(std::string_view iso);

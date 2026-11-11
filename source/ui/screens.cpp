@@ -71,6 +71,20 @@ static void draw_aside_installed(Gfx& g, const View& v) {
         g.text(line, x + 18, ty, ui::kSmall, color::muted);
         ty += g.line_height(ui::kSmall);
     }
+    if (v.applet_mode) {
+        y += h + 16;
+        std::vector<std::string> note = g.wrap(
+            "Opened from the Album, with less memory. For the best experience, hold R while "
+            "starting a game to open the Homebrew Menu.",
+            ui::kSmall, w - 36, 5);
+        int nh = static_cast<int>(note.size()) * g.line_height(ui::kSmall) + 36;
+        g.framed(x, y, w, nh, 14, 1, color::wait, color::panel);
+        ty = y + 18;
+        for (const std::string& line : note) {
+            g.text(line, x + 18, ty, ui::kSmall, color::fg);
+            ty += g.line_height(ui::kSmall);
+        }
+    }
 }
 
 static void draw_library(Gfx& g, const View& v) {

@@ -421,4 +421,13 @@ std::string plain_text(std::string_view html) {
     return out;
 }
 
+std::optional<std::string> install_blocker(bool app_is_application,
+                                           std::optional<std::uint64_t> running_program) {
+    if (app_is_application || running_program != kDreadProgramId) {
+        return std::nullopt;
+    }
+    return "Dread is running in the background. Close it first (press HOME, then X on "
+           "Dread), then install. Nothing on the SD card was changed.";
+}
+
 }  // namespace dreadovania

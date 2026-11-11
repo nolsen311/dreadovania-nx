@@ -138,6 +138,16 @@ TEST(preset_descriptions_as_plain_text) {
     CHECK(plain_text("x &unknown; y") == "x &unknown; y");
 }
 
+TEST(installing_waits_while_dread_runs) {
+    CHECK(!install_blocker(true, std::nullopt));
+    CHECK(!install_blocker(false, std::nullopt));  // applet mode, no game running
+    CHECK(!install_blocker(false, 0x0100000000010000ULL));  // another game suspended
+    auto blocked = install_blocker(false, kDreadProgramId);
+    CHECK(blocked && blocked->find("Close it first") != std::string::npos);
+    // Title takeover over Dread: the app *is* the application; Dread isn't running.
+    CHECK(!install_blocker(true, kDreadProgramId));
+}
+
 TEST(problem_details) {
     CHECK(problem_detail(R"({"title": "Pairing failed", "detail": "code expired"})") ==
           "code expired");
