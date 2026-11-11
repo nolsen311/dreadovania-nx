@@ -162,6 +162,18 @@ int Gfx::line_height(int size) {
     return f != nullptr ? TTF_FontLineSkip(f) : size + size / 3;
 }
 
+int Gfx::top_for_center(int cy, int size, bool bold) {
+    TTF_Font* f = font(size, bold);
+    if (f == nullptr) {
+        return cy - size / 2;
+    }
+    int minx = 0, maxx = 0, miny = 0, maxy = 0, advance = 0;
+    int cap = TTF_GlyphMetrics(f, 'H', &minx, &maxx, &miny, &maxy, &advance) == 0 ? maxy
+                                                                                : size * 7 / 10;
+    // A rendered line's top is `ascent` above the baseline; capitals reach `cap` above it.
+    return cy - TTF_FontAscent(f) + cap / 2;
+}
+
 int Gfx::measure(std::string_view s, int size, bool bold) {
     TTF_Font* f = font(size, bold);
     int w = 0;
