@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "dreadovania/api.hpp"
+#include "dreadovania/servers.hpp"
 #include "dreadovania/version.hpp"
 #include "http.hpp"
 #include "installer.hpp"
@@ -27,37 +28,57 @@
 namespace {
 
 using dreadovania::DeviceConfig;
+using dreadovania::PairedServer;
+using dreadovania::ServerList;
 using dreadovania::PresetSummary;
 using dreadovania::SeedSummary;
 
-constexpr const char* kDeviceFile = "sdmc:/config/dreadovania/device.json";
+constexpr const char* kDeviceFile = "sdmc:/config/dreadovania/device.json";    // before 0.6
+constexpr const char* kServersFile = "sdmc:/config/dreadovania/servers.json";  // ADR 0010
 
 // ---- settings on the SD card -------------------------------------------------
 
-std::optional<DeviceConfig> load_config() {
-    std::ifstream in(kDeviceFile, std::ios::binary);
+std::optional<std::string> read_file(const char* path) {
+    std::ifstream in(path, std::ios::binary);
     if (!in) {
         return std::nullopt;
     }
     std::ostringstream ss;
     ss << in.rdbuf();
-    return dreadovania::parse_device_config(ss.str());
+    return ss.str();
 }
 
-bool save_config(const DeviceConfig& config) {
-    const std::string tmp = std::string(kDeviceFile) + ".tmp";
+bool save_servers(const ServerList& list) {
+    const std::string tmp = std::string(kServersFile) + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        out << dreadovania::serialize_device_config(config);
+        out << dreadovania::serialize_server_list(list);
         if (!out) {
             return false;
         }
     }
-    std::remove(kDeviceFile);
-    return std::rename(tmp.c_str(), kDeviceFile) == 0;
+    std::remove(kServersFile);
+    return std::rename(tmp.c_str(), kServersFile) == 0;
 }
 
-void forget_config() { std::remove(kDeviceFile); }
+// The paired servers. On the first start after updating from a single-server
+// version, device.json becomes the list's first entry and is then removed, so
+// the token is only stored once (ADR 0010).
+ServerList load_servers() {
+    if (auto text = read_file(kServersFile)) {
+        return dreadovania::parse_server_list(*text).value_or(ServerList{});
+    }
+    auto old = read_file(kDeviceFile);
+    auto config = old ? dreadovania::parse_device_config(*old) : std::nullopt;
+    if (!config) {
+        return ServerList{};
+    }
+    ServerList list = dreadovania::server_list_from(*config);
+    if (save_servers(list)) {
+        std::remove(kDeviceFile);
+    }
+    return list;
+}
 
 // The last server address entered, kept even when pairing fails or after
 // unpairing, so it never has to be typed twice.
@@ -139,7 +160,10 @@ class App {
         }
         net_error_ = http_.init();
         v_.applet_mode = !app::system_state().app_is_application;
-        config_ = load_config();
+        servers_ = load_servers();
+        if (auto chosen = dreadovania::most_recent(servers_)) {
+            config_ = servers_.servers[*chosen];
+        }
         v_.last_server = config_ ? config_->server : load_last_server();
         v_.screen = config_ ? Screen::Library : Screen::Pair;
         if (config_) {
@@ -193,7 +217,8 @@ class App {
     ui::Gfx gfx_;
     app::Http http_;
     std::string net_error_;
-    std::optional<DeviceConfig> config_;
+    ServerList servers_;                  // every paired server (ADR 0010)
+    std::optional<PairedServer> config_;  // the one in use
     bool quitting_ = false;
     bool touching_ = false;
 
@@ -576,12 +601,15 @@ class App {
             say("Not paired: " + explain(r, "the server refused the code"), true);
             return;
         }
-        DeviceConfig config{*server.origin, paired->device_id, paired->name, paired->token};
-        if (!save_config(config)) {
+        ServerList updated = servers_;
+        std::size_t index = dreadovania::remember_server(
+            updated, {*server.origin, paired->device_id, paired->name, paired->token, {}, 0});
+        if (!save_servers(updated)) {
             say("Paired, but the settings couldn't be saved to the SD card.", true);
             return;
         }
-        config_ = config;
+        servers_ = std::move(updated);
+        config_ = servers_.servers[index];
         v_.typed_code.clear();
         v_.screen = Screen::Library;
         refresh();
@@ -596,12 +624,9 @@ class App {
         }
         app::Response r = http_.request("GET", url("/api/v1/seeds?limit=50"), "", config_->token);
         if (r.status == 401) {
-            v_.last_server = config_->server;
-            save_last_server(v_.last_server);
-            forget_config();
-            config_.reset();
-            v_.screen = Screen::Pair;
-            say("This Switch was removed on the server. Pair it again.", true);
+            std::string removed = config_->server;
+            drop_current();
+            say("This Switch was removed on " + removed + ". Pair it again.", true);
             return;
         }
         auto seeds = r.status == 200 ? dreadovania::parse_seed_list(r.body) : std::nullopt;
@@ -661,13 +686,32 @@ class App {
     void unpair() {
         // Tell the server first; forget the token here whatever it answers.
         http_.request("DELETE", url("/api/v1/devices/me"), "", config_->token);
+        std::string removed = config_->server;
+        if (drop_current()) {
+            say("Unpaired from " + removed + ".", false);
+        } else {
+            say("Unpaired. Press A to pair again.", false);
+        }
+    }
+
+    // Forget the server in use (unpaired, or removed on the server). Another
+    // paired server, if any, takes its place. Returns whether there was one.
+    bool drop_current() {
         v_.last_server = config_->server;
         save_last_server(v_.last_server);
-        forget_config();
+        dreadovania::forget_server(servers_, config_->server);
+        save_servers(servers_);
         config_.reset();
         v_.seeds.clear();
+        v_.loaded = false;
+        if (auto next = dreadovania::most_recent(servers_)) {
+            config_ = servers_.servers[*next];
+            v_.screen = Screen::Library;
+            refresh();
+            return true;
+        }
         v_.screen = Screen::Pair;
-        say("Unpaired. Press A to pair again.", false);
+        return false;
     }
 
     // ---- drawing ------------------------------------------------------------------------
