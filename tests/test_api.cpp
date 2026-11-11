@@ -148,6 +148,34 @@ TEST(installing_waits_while_dread_runs) {
     CHECK(!install_blocker(true, kDreadProgramId));
 }
 
+TEST(app_versions_and_updates) {
+    CHECK(parse_version("0.4.2") == (std::array<int, 3>{0, 4, 2}));
+    CHECK(parse_version("v1.10.0") == (std::array<int, 3>{1, 10, 0}));
+    CHECK(!parse_version("1.0"));
+    CHECK(!parse_version("1.0.0-beta"));
+    CHECK(!parse_version(""));
+    CHECK(compare_versions("0.4.10", "0.4.9") > 0);  // numbers, not text
+    CHECK(compare_versions("0.4.2", "v0.4.2") == 0);
+    CHECK(compare_versions("0.5.0", "0.4.9") > 0);
+
+    auto latest = parse_app_latest(
+        R"({"available": true, "version": "0.4.3", "size": 9438743, "sha256": ")" +
+        std::string(64, 'a') + R"(", "minimum_version": "0.2.0", "reason": null})");
+    CHECK(latest && latest->available && latest->version == "0.4.3" && latest->size == 9438743);
+    CHECK(update_need("0.4.2", *latest) == UpdateNeed::Available);
+    CHECK(update_need("0.4.3", *latest) == UpdateNeed::None);
+    CHECK(update_need("0.5.0", *latest) == UpdateNeed::None);  // never "update" to older
+    CHECK(update_need("0.1.0", *latest) == UpdateNeed::Required);
+
+    auto off = parse_app_latest(R"({"available": false, "minimum_version": "0.2.0",
+                                    "reason": "app updates are turned off on this server"})");
+    CHECK(off && !off->available && off->reason.find("turned off") != std::string::npos);
+    CHECK(update_need("0.4.2", *off) == UpdateNeed::None);
+    CHECK(update_need("0.1.9", *off) == UpdateNeed::Required);  // still told it's too old
+    CHECK(!parse_app_latest(R"({"available": true, "version": "0.4.3"})"));  // no checksum
+    CHECK(!parse_app_latest("[]"));
+}
+
 TEST(problem_details) {
     CHECK(problem_detail(R"({"title": "Pairing failed", "detail": "code expired"})") ==
           "code expired");

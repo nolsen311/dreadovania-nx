@@ -107,6 +107,20 @@ int main(int argc, char** argv) {
     applet.show_toast = true;
     shot("9-applet-dread-running", applet);
 
+    ui::View update = library();
+    update.update_version = "0.4.3";
+    shot("10-update-available", update);
+    update.applet_mode = true;
+    shot("10b-update-in-applet-mode", update);
+
+    ui::View updating = library();
+    updating.screen = ui::Screen::Working;
+    updating.work.title = "Updating the app to 0.4.3";
+    updating.work.steps = {"Download and check", "Replace the app", "Restart"};
+    updating.work.fraction = 0.4;
+    updating.work.detail = "";
+    shot("11-updating", updating);
+
     ui::View unpaired;
     shot("8-first-run", unpaired);
 

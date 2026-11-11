@@ -48,6 +48,8 @@ struct View {
     std::string typed_code;
     dreadovania::UserCa user_ca = dreadovania::UserCa::Missing;
     bool applet_mode = false;  // opened from the Album: less memory, a game may be suspended
+    std::string update_version;  // a newer verified app from the server, or ""
+    bool update_required = false;  // this app is older than the server works with
 
     std::string toast;
     bool toast_bad = false;
