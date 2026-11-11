@@ -16,3 +16,4 @@ supersedes the old one; don't rewrite history.
 | [0008](0008-release-by-comment.md) | Release with a `/release` comment and a release app | Accepted |
 | [0009](0009-graphical-ui.md) | A graphical UI drawn with SDL2 | Proposed |
 | [0010](0010-several-servers-by-network.md) | Several servers, picked by the network the Switch is on | Proposed |
+| [0011](0011-signoff-stacked-pull-requests.md) | `/signoff` for stacked pull requests | Proposed |
