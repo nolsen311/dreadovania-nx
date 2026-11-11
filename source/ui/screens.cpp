@@ -28,7 +28,7 @@ std::size_t first_visible(std::size_t cursor, std::size_t count) {
     return std::min(cursor - rows / 2, count - rows);
 }
 
-static void draw_aside_installed(Gfx& g, const View& v) {
+static int draw_aside_installed(Gfx& g, const View& v) {
     const int x = 24;
     int y = ui::kHeader + 24;
     ui::section_title(g, x, y, "On this Switch");
@@ -84,11 +84,31 @@ static void draw_aside_installed(Gfx& g, const View& v) {
             g.text(line, x + 18, ty, ui::kSmall, color::fg);
             ty += g.line_height(ui::kSmall);
         }
+        return y + nh;
     }
+    return y + h;
+}
+
+static void draw_update_card(Gfx& g, const View& v, int below) {
+    if (v.update_version.empty() && !v.update_required) {
+        return;
+    }
+    const int x = 24;
+    const int w = kAsideW - 48;
+    const int h = 84;
+    // At the bottom of the column, or under the cards above if they reach that far.
+    const int y = std::max(below + 16, Gfx::kHeight - kFooter - 20 - h);
+    Color edge = v.update_required ? color::bad : color::accent;
+    g.framed(x, y, w, h, 14, 2, edge, color::panel);
+    std::string title = v.update_required ? "Update required" : "Update available";
+    g.text(title, x + 18, y + 16, ui::kBody, edge, true);
+    std::string line = v.update_version.empty() ? "Too old for this server: press -"
+                                                : v.update_version + " is ready: press -";
+    g.text(line, x + 18, y + 48, ui::kSmall, color::fg, false, ui::Align::Left, w - 36);
 }
 
 static void draw_library(Gfx& g, const View& v) {
-    draw_aside_installed(g, v);
+    draw_update_card(g, v, draw_aside_installed(g, v));
     g.box(kAsideW, ui::kHeader, 1, ui::Gfx::kHeight - ui::kHeader - ui::kFooter, 0,
              color::line);
     const int x = kAsideW + 32;
@@ -115,9 +135,12 @@ static void draw_library(Gfx& g, const View& v) {
         g.text(meta, x + 20, y + 44, ui::kSmall, color::muted, false, ui::Align::Left, text_w);
     }
     std::string count = !v.loaded ? "Loading..." : std::to_string(v.seeds.size()) + " seeds";
-    ui::footer(g, count,
-               {{"A", "Install"}, {"R", "New seed"}, {"Y", "Refresh"}, {"X", "Unpair"},
-                {"+", "Exit"}});
+    std::vector<ui::Hint> hints = {{"A", "Install"}, {"R", "New seed"}, {"Y", "Refresh"},
+                                   {"X", "Unpair"}, {"+", "Exit"}};
+    if (!v.update_version.empty() || v.update_required) {
+        hints.insert(hints.begin(), {"-", "Update"});
+    }
+    ui::footer(g, count, hints);
 }
 
 static void draw_presets(Gfx& g, const View& v) {

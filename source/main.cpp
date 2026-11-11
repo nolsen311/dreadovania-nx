@@ -10,6 +10,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dreadovania/api.hpp"
@@ -18,6 +19,7 @@
 #include "installer.hpp"
 #include "jobs.hpp"
 #include "system.hpp"
+#include "updater.hpp"
 #include "ui/gfx.hpp"
 #include "ui/screens.hpp"
 #include "ui/widgets.hpp"
@@ -123,7 +125,7 @@ std::uint64_t now_ms() { return armTicksToNs(armGetSystemTick()) / 1'000'000; }
 
 class App {
   public:
-    App() {
+    explicit App(std::string self_path) : self_path_(std::move(self_path)) {
         padConfigureInput(1, HidNpadStyleSet_NpadStandard);
         padInitializeDefault(&pad_);
         hidInitializeTouchScreen();
@@ -185,6 +187,8 @@ class App {
     }
 
   private:
+    std::string self_path_;          // how the app was started (argv[0]), for updating
+    dreadovania::AppLatest latest_;  // the server's answer to /app/latest
     PadState pad_{};
     ui::Gfx gfx_;
     app::Http http_;
@@ -238,6 +242,19 @@ class App {
     }
 
     void library_step(u64 down) {
+        if (down & HidNpadButton_Minus) {
+            if (!v_.update_version.empty()) {
+                update_app();
+            } else if (v_.update_required) {
+                say("This app is too old for the server, and the server has no update to "
+                    "offer. Download the latest app from its Releases page.", true);
+            }
+            return;
+        }
+        if (v_.update_required && (down & (HidNpadButton_A | HidNpadButton_R))) {
+            say("This app is too old for the server. Press - to update it first.", true);
+            return;
+        }
         if (down & HidNpadButton_A) {
             get_selected();
         } else if (down & HidNpadButton_R) {
@@ -596,6 +613,49 @@ class App {
         v_.cursor = v_.seeds.empty() ? 0 : std::min(v_.cursor, v_.seeds.size() - 1);
         v_.loaded = true;
         v_.installed = app::installed_seed().value_or("");
+        check_for_update();
+    }
+
+    // ---- updating the app (server ADR 0021) ---------------------------------------------
+
+    void check_for_update() {
+        app::Response r = http_.request("GET", url("/api/v1/app/latest"), "", config_->token);
+        auto latest = r.status == 200 ? dreadovania::parse_app_latest(r.body) : std::nullopt;
+        if (!latest) {
+            return;  // an older server without updates, or a hiccup: try again next refresh
+        }
+        latest_ = *latest;
+        auto need = dreadovania::update_need(dreadovania::kVersion, latest_);
+        v_.update_required = need == dreadovania::UpdateNeed::Required;
+        bool newer = latest_.available &&
+                     dreadovania::compare_versions(latest_.version, dreadovania::kVersion) > 0;
+        v_.update_version = newer ? latest_.version : "";
+    }
+
+    void update_app() {
+        begin_work("Updating the app to " + latest_.version, 0);
+        v_.work.steps = {"Download and check", "Replace the app", "Restart"};
+        render();
+        app::UpdateResult result = app::download_update(
+            http_, config_->server, config_->token, latest_, self_path_, [this](double f) {
+                v_.work.fraction = f;
+                render();
+            });
+        if (!result.ok) {
+            v_.screen = Screen::Library;
+            say(result.message, true);
+            return;
+        }
+        step_to(2);
+        // Ask the Homebrew Menu to start the new version when this one exits.
+        if (R_SUCCEEDED(envSetNextLoad(self_path_.c_str(), self_path_.c_str()))) {
+            quitting_ = true;
+            return;
+        }
+        v_.screen = Screen::Library;
+        v_.update_version.clear();
+        v_.update_required = false;
+        say(result.message + " Close the app and open it again to use it.", false);
     }
 
     void unpair() {
@@ -624,8 +684,8 @@ class App {
 
 }  // namespace
 
-int main(int /*argc*/, char** /*argv*/) {
-    App app;
+int main(int argc, char** argv) {
+    App app(argc > 0 && argv[0] != nullptr ? argv[0] : "");
     std::string error = app.start();
     if (!error.empty()) {
         // No screen to draw on: fall back to libnx's console for the reason.

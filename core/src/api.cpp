@@ -430,4 +430,75 @@ std::optional<std::string> install_blocker(bool app_is_application,
            "Dread), then install. Nothing on the SD card was changed.";
 }
 
+std::optional<AppLatest> parse_app_latest(std::string_view body) {
+    json::ParseResult parsed = json::parse(body);
+    if (!parsed.value || !parsed.value->is_object()) {
+        return std::nullopt;
+    }
+    const json::Value& v = *parsed.value;
+    AppLatest out;
+    out.available = v.bool_at("available").value_or(false);
+    out.minimum_version = v.string_at("minimum_version").value_or("");
+    out.reason = v.string_at("reason").value_or("");
+    if (out.available) {
+        auto version = v.string_at("version");
+        auto sha = v.string_at("sha256");
+        auto size = v.int_at("size");
+        if (!version || !parse_version(*version) || !sha || sha->size() != 64 || !size ||
+            *size <= 0) {
+            return std::nullopt;
+        }
+        out.version = *version;
+        out.sha256 = *sha;
+        out.size = static_cast<std::uint64_t>(*size);
+    }
+    return out;
+}
+
+std::optional<std::array<int, 3>> parse_version(std::string_view text) {
+    if (!text.empty() && text.front() == 'v') {
+        text.remove_prefix(1);
+    }
+    std::array<int, 3> parts{};
+    std::size_t part = 0;
+    bool digit = false;
+    for (char c : text) {
+        if (c >= '0' && c <= '9') {
+            if (parts[part] > 99999) {
+                return std::nullopt;
+            }
+            parts[part] = parts[part] * 10 + (c - '0');
+            digit = true;
+        } else if (c == '.' && digit && part < 2) {
+            ++part;
+            digit = false;
+        } else {
+            return std::nullopt;
+        }
+    }
+    if (part != 2 || !digit) {
+        return std::nullopt;
+    }
+    return parts;
+}
+
+int compare_versions(std::string_view a, std::string_view b) {
+    auto va = parse_version(a);
+    auto vb = parse_version(b);
+    if (!va || !vb) {
+        return va ? 1 : vb ? -1 : 0;
+    }
+    return *va < *vb ? -1 : *va > *vb ? 1 : 0;
+}
+
+UpdateNeed update_need(std::string_view current, const AppLatest& latest) {
+    if (!latest.minimum_version.empty() && compare_versions(current, latest.minimum_version) < 0) {
+        return UpdateNeed::Required;
+    }
+    if (latest.available && compare_versions(latest.version, current) > 0) {
+        return UpdateNeed::Available;
+    }
+    return UpdateNeed::None;
+}
+
 }  // namespace dreadovania

@@ -3,6 +3,7 @@
 // docs/openapi.json, ADR 0017), and its settings file on the SD card.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -74,6 +75,26 @@ inline constexpr std::uint64_t kDreadProgramId = 0x010093801237C000ULL;
 // seed or crash it when it resumes.
 std::optional<std::string> install_blocker(bool app_is_application,
                                            std::optional<std::uint64_t> running_program);
+
+// App updates (server ADR 0021): GET /app/latest.
+struct AppLatest {
+    bool available = false;
+    std::string version;         // e.g. "0.4.3"
+    std::uint64_t size = 0;
+    std::string sha256;
+    std::string minimum_version;  // the oldest app this server works with
+    std::string reason;          // why nothing is available
+};
+std::optional<AppLatest> parse_app_latest(std::string_view body);
+
+// "0.4.2" or "v0.4.2" -> {0, 4, 2}; nothing if it isn't a version.
+std::optional<std::array<int, 3>> parse_version(std::string_view text);
+// -1, 0 or 1; an unreadable version counts as older than any other.
+int compare_versions(std::string_view a, std::string_view b);
+
+enum class UpdateNeed { None, Available, Required };
+// Whether this app (`current`) should update, given the server's answer.
+UpdateNeed update_need(std::string_view current, const AppLatest& latest);
 
 // "2026-11-09T20:00:00+00:00" -> "Nov 9"; "" if it isn't a date.
 std::string short_date(std::string_view iso);
