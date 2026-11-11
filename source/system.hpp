@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace app {
 
@@ -15,5 +16,10 @@ struct SystemState {
 
 // Asks the system now; a suspended game can be closed while the app is open.
 SystemState system_state();
+
+// The name of the network the console is connected to (ADR 0010): the Wi-Fi's
+// SSID, or the network profile's name on a wired connection. "" when it isn't
+// connected or the system won't say. Only read; never sent anywhere.
+std::string current_network();
 
 }  // namespace app

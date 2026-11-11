@@ -161,9 +161,7 @@ class App {
         net_error_ = http_.init();
         v_.applet_mode = !app::system_state().app_is_application;
         servers_ = load_servers();
-        if (auto chosen = dreadovania::most_recent(servers_)) {
-            config_ = servers_.servers[*chosen];
-        }
+        pick_server();
         v_.last_server = config_ ? config_->server : load_last_server();
         v_.screen = config_ ? Screen::Library : Screen::Pair;
         if (config_) {
@@ -219,6 +217,8 @@ class App {
     std::string net_error_;
     ServerList servers_;                  // every paired server (ADR 0010)
     std::optional<PairedServer> config_;  // the one in use
+    std::string network_;                 // the network the console is on, or ""
+    std::optional<std::string> picked_on_;  // the network at the last automatic choice
     bool quitting_ = false;
     bool touching_ = false;
 
@@ -604,6 +604,13 @@ class App {
         ServerList updated = servers_;
         std::size_t index = dreadovania::remember_server(
             updated, {*server.origin, paired->device_id, paired->name, paired->token, {}, 0});
+        // Pairing here links this network to the new server, unless it's already
+        // linked to another one (ADR 0010 decision 4).
+        network_ = app::current_network();
+        picked_on_ = network_;
+        if (!dreadovania::linked_server(updated, network_)) {
+            dreadovania::link_network(updated, index, network_);
+        }
         if (!save_servers(updated)) {
             say("Paired, but the settings couldn't be saved to the SD card.", true);
             return;
@@ -621,6 +628,12 @@ class App {
         if (!net_error_.empty()) {
             say(net_error_, true);
             return;
+        }
+        if (app::current_network() != picked_on_.value_or("")) {
+            pick_server();  // moved to another network since the last choice
+            if (!config_) {
+                return;
+            }
         }
         app::Response r = http_.request("GET", url("/api/v1/seeds?limit=50"), "", config_->token);
         if (r.status == 401) {
@@ -704,14 +717,46 @@ class App {
         config_.reset();
         v_.seeds.clear();
         v_.loaded = false;
-        if (auto next = dreadovania::most_recent(servers_)) {
-            config_ = servers_.servers[*next];
+        pick_server();
+        if (config_) {
             v_.screen = Screen::Library;
             refresh();
             return true;
         }
         v_.screen = Screen::Pair;
         return false;
+    }
+
+    // Choose the server for the network the console is on (ADR 0010 decision 3).
+    void pick_server() {
+        network_ = app::current_network();
+        picked_on_ = network_;
+        dreadovania::ServerChoice choice = dreadovania::choose_server(servers_, network_);
+        v_.server_note.clear();
+        if (!choice.index) {
+            config_.reset();
+            return;
+        }
+        std::size_t index = *choice.index;
+        if (dreadovania::most_recent(servers_) != index) {
+            dreadovania::mark_used(servers_, index);
+            save_servers(servers_);
+        }
+        bool changed = !config_ || config_->server != servers_.servers[index].server;
+        config_ = servers_.servers[index];
+        if (changed) {
+            v_.seeds.clear();
+            v_.loaded = false;
+        }
+        if (servers_.servers.size() > 1 && choice.reason != dreadovania::ChoiceReason::Network) {
+            v_.server_note = network_.empty() ? "Network unknown: using the last server"
+                                              : "Not linked to " + network_;
+        }
+        if (changed && servers_.servers.size() > 1) {
+            say("Using " + config_->server +
+                    (v_.server_note.empty() ? " for " + network_ : ": " + v_.server_note) + ".",
+                false);
+        }
     }
 
     // ---- drawing ------------------------------------------------------------------------

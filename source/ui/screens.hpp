@@ -30,6 +30,7 @@ struct View {
     Screen screen = Screen::Pair;
     Dialog dialog = Dialog::None;
     std::string server;  // shown at the top right; "" when not paired
+    std::string server_note;  // why this server, when not by network (ADR 0010)
     bool connected = false;
 
     std::vector<dreadovania::SeedSummary> seeds;

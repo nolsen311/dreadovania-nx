@@ -48,4 +48,21 @@ bool forget_server(ServerList& list, std::string_view origin);
 // The one used most recently (ADR 0010 rules 2 and 3), or nothing if the list is empty.
 std::optional<std::size_t> most_recent(const ServerList& list);
 
+// The server a network is linked to, if any. Network names are compared exactly.
+std::optional<std::size_t> linked_server(const ServerList& list, std::string_view network);
+
+// Link a network to a server. A network is linked to at most one server, so it is
+// unlinked from any other. Returns false for an empty name or an unknown index.
+bool link_network(ServerList& list, std::size_t index, std::string_view network);
+bool unlink_network(ServerList& list, std::size_t index, std::string_view network);
+
+// Which server to use on a network (ADR 0010 decision 3): the one linked to it;
+// otherwise the only one; otherwise the most recently used.
+enum class ChoiceReason { Network, OnlyServer, LastUsed, NoServers };
+struct ServerChoice {
+    std::optional<std::size_t> index;
+    ChoiceReason reason = ChoiceReason::NoServers;
+};
+ServerChoice choose_server(const ServerList& list, std::string_view network);
+
 }  // namespace dreadovania
