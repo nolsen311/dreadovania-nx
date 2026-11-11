@@ -131,4 +131,57 @@ std::optional<std::size_t> most_recent(const ServerList& list) {
     return best;
 }
 
+std::optional<std::size_t> linked_server(const ServerList& list, std::string_view network) {
+    if (network.empty()) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < list.servers.size(); ++i) {
+        const auto& networks = list.servers[i].networks;
+        if (std::find(networks.begin(), networks.end(), network) != networks.end()) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+bool link_network(ServerList& list, std::size_t index, std::string_view network) {
+    if (network.empty() || index >= list.servers.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < list.servers.size(); ++i) {
+        if (i != index) {
+            unlink_network(list, i, network);
+        }
+    }
+    auto& networks = list.servers[index].networks;
+    if (std::find(networks.begin(), networks.end(), network) == networks.end()) {
+        networks.emplace_back(network);
+    }
+    return true;
+}
+
+bool unlink_network(ServerList& list, std::size_t index, std::string_view network) {
+    if (index >= list.servers.size()) {
+        return false;
+    }
+    auto& networks = list.servers[index].networks;
+    auto it = std::remove(networks.begin(), networks.end(), network);
+    bool found = it != networks.end();
+    networks.erase(it, networks.end());
+    return found;
+}
+
+ServerChoice choose_server(const ServerList& list, std::string_view network) {
+    if (auto linked = linked_server(list, network)) {
+        return {linked, ChoiceReason::Network};
+    }
+    if (list.servers.size() == 1) {
+        return {std::size_t{0}, ChoiceReason::OnlyServer};
+    }
+    if (auto recent = most_recent(list)) {
+        return {recent, ChoiceReason::LastUsed};
+    }
+    return {};
+}
+
 }  // namespace dreadovania

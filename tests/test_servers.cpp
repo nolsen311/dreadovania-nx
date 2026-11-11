@@ -96,3 +96,50 @@ TEST(remembering_and_forgetting_servers) {
     CHECK(list.servers.size() == 1);
     CHECK(most_recent(list) == std::size_t{0});
 }
+
+TEST(linking_networks) {
+    ServerList list;
+    remember_server(list, server("https://home.lan"));
+    remember_server(list, server("https://friend.lan"));
+    CHECK(!linked_server(list, "Home"));
+    CHECK(link_network(list, 0, "Home"));
+    CHECK(link_network(list, 0, "Home"));  // twice: still once
+    CHECK(list.servers[0].networks.size() == 1);
+    CHECK(linked_server(list, "Home") == std::size_t{0});
+    CHECK(!linked_server(list, "home"));  // SSIDs are case-sensitive
+
+    CHECK(link_network(list, 1, "Home"));  // a network belongs to one server: it moves
+    CHECK(linked_server(list, "Home") == std::size_t{1});
+    CHECK(list.servers[0].networks.empty());
+
+    CHECK(!link_network(list, 0, ""));
+    CHECK(!link_network(list, 5, "Cafe"));
+    CHECK(!linked_server(list, ""));
+    CHECK(unlink_network(list, 1, "Home"));
+    CHECK(!unlink_network(list, 1, "Home"));
+    CHECK(!linked_server(list, "Home"));
+}
+
+TEST(choosing_a_server) {
+    ServerList list;
+    CHECK(choose_server(list, "Home").reason == ChoiceReason::NoServers);
+    CHECK(!choose_server(list, "Home").index);
+
+    remember_server(list, server("https://home.lan"));
+    auto only = choose_server(list, "Cafe");
+    CHECK(only.index == std::size_t{0} && only.reason == ChoiceReason::OnlyServer);
+
+    remember_server(list, server("https://friend.lan"));  // now the most recent
+    link_network(list, 0, "Home");
+    link_network(list, 1, "Friend's Wi-Fi");
+    auto home = choose_server(list, "Home");
+    CHECK(home.index == std::size_t{0} && home.reason == ChoiceReason::Network);
+    auto away = choose_server(list, "Friend's Wi-Fi");
+    CHECK(away.index == std::size_t{1} && away.reason == ChoiceReason::Network);
+
+    auto elsewhere = choose_server(list, "Cafe");  // not linked: the last used
+    CHECK(elsewhere.index == std::size_t{1} && elsewhere.reason == ChoiceReason::LastUsed);
+    mark_used(list, 0);
+    CHECK(choose_server(list, "Cafe").index == std::size_t{0});
+    CHECK(choose_server(list, "").reason == ChoiceReason::LastUsed);  // network unknown
+}
