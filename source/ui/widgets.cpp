@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/widgets.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace ui {
@@ -37,20 +38,55 @@ void logo(Gfx& g, int x, int y, int size) {
            size / 2, color::fg, true, Align::Center);
 }
 
-void header(Gfx& g, const std::string& right, bool connected) {
+void header(Gfx& g, const std::string& right, bool connected, const std::string& button) {
     logo(g, 32, 16, 40);
     g.text("Dreadovania", 88, 20, 26, color::fg, true);
-    int w = g.text(right, Gfx::kWidth - 32, 25, kSmall, color::muted, false, Align::Right, 560);
+    int end = Gfx::kWidth - 32;
+    if (!button.empty()) {
+        // A pill around the status, address and button: the whole thing reads as
+        // one control, "press L to change the server".
+        int gw = glyph_width(g, button);
+        int tw = std::min(g.measure(right, kSmall), 560);
+        int pill_w = 12 + gw + 12 + tw + (connected ? 26 : 0) + 18;
+        g.framed(end - pill_w, 14, pill_w, 44, 22, 1, color::line, color::panel);
+        glyph(g, end - 7 - gw, 36, button);
+        end -= 7 + gw + 12;
+    }
+    int w = g.text(right, end, 25, kSmall, color::muted, false, Align::Right, 560);
     if (connected && w > 0) {
-        g.circle(Gfx::kWidth - 32 - w - 16, 36, 5, color::ok);
+        g.circle(end - w - 16, 36, 5, color::ok);
     }
     g.box(0, kHeader - 1, Gfx::kWidth, 1, 0, color::line);
 }
 
+static bool is_shoulder(const std::string& label) {
+    return label == "L" || label == "R" || label == "ZL" || label == "ZR";
+}
+
+int glyph_width(Gfx& g, const std::string& label) {
+    if (is_shoulder(label)) {
+        return std::max(42, g.measure(label, 17, true) + 24);
+    }
+    return label.size() <= 1 ? 30 : g.measure(label, 17, true) + 20;
+}
+
 int glyph(Gfx& g, int x, int cy, const std::string& label) {
-    int tw = g.measure(label, 17, true);
-    int w = label.size() <= 1 ? 30 : tw + 20;
-    g.box(x, cy - 15, w, 30, 15, color::fg);
+    int w = glyph_width(g, label);
+    if (is_shoulder(label)) {
+        // Like the button itself: a flat rounded rectangle whose outer top corner
+        // is rounder (left for L and ZL, right for R and ZR).
+        const int h = 26, small = 6, big = 12;
+        const int y = cy - h / 2;
+        bool left = label.front() == 'L' || label == "ZL";
+        int corner_x = left ? x + big : x + w - big;
+        g.box(left ? x + big : x, y, w - big, h, small, color::fg);
+        g.box(x, y + big, w, h - big, small, color::fg);
+        g.box(left ? x : x + w - big, y + big, big, small, 0, color::fg);  // no notch below
+        g.box(left ? x + big : x + w - big - small, y, small, big, 0, color::fg);
+        g.circle(corner_x, y + big, big, color::fg);
+    } else {
+        g.box(x, cy - 15, w, 30, 15, color::fg);
+    }
     g.text(label, x + w / 2, g.top_for_center(cy, 17, true), 17, color::bg, true, Align::Center);
     return w;
 }
@@ -60,13 +96,20 @@ void footer(Gfx& g, const std::string& left, const std::vector<Hint>& hints) {
     g.box(0, top, Gfx::kWidth, 1, 0, color::line);
     int cy = top + kFooter / 2;
     const int label_top = g.top_for_center(cy, kSmall + 1);
-    g.text(left, 32, label_top, kSmall + 1, color::muted, false, Align::Left, 420);
+    int hints_w = 0;
+    for (const Hint& h : hints) {
+        int gw = glyph_width(g, h.first);
+        hints_w += g.measure(h.second, kSmall + 1) + gw + 8 + 28;
+    }
+    // The left text gets what the hints leave, so the two never overlap.
+    int left_w = std::max(1, Gfx::kWidth - 32 - hints_w - 32);  // 0 would mean no limit
+    g.text(left, 32, label_top, kSmall + 1, color::muted, false, Align::Left, left_w);
     int x = Gfx::kWidth - 32;
     for (auto it = hints.rbegin(); it != hints.rend(); ++it) {
         int label_w = g.measure(it->second, kSmall + 1);
         x -= label_w;
         g.text(it->second, x, label_top, kSmall + 1, color::fg);
-        int gw = it->first.size() <= 1 ? 30 : g.measure(it->first, 17, true) + 20;
+        int gw = glyph_width(g, it->first);
         x -= gw + 8;
         glyph(g, x, cy, it->first);
         x -= 28;

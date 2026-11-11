@@ -139,9 +139,11 @@ static void draw_library(Gfx& g, const View& v) {
         count += "  ·  " + v.server_note;
     }
     std::vector<ui::Hint> hints = {{"A", "Install"}, {"R", "New seed"}, {"Y", "Refresh"},
-                                   {"L", "Servers"}, {"+", "Exit"}};
+                                   {"+", "Exit"}};
     if (!v.update_version.empty() || v.update_required) {
         hints.insert(hints.begin(), {"-", "Update"});
+    } else {
+        hints.insert(hints.end() - 1, {"ZL", "Updates"});
     }
     ui::footer(g, count, hints);
 }
@@ -413,7 +415,9 @@ void draw(Gfx& g, const View& v) {
     if (right.rfind("https://", 0) == 0) {
         right = right.substr(8);
     }
-    ui::header(g, right, v.connected);
+    // L, next to the server it changes, opens the Servers screen (ADR 0010).
+    bool servers_button = v.screen == Screen::Library && v.dialog == Dialog::None;
+    ui::header(g, right, v.connected, servers_button ? "L" : "");
     switch (v.screen) {
         case Screen::Pair:
             draw_pair(g, v);

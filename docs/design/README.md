@@ -21,8 +21,13 @@ artwork, the same as the server's.
 - **Big enough for handheld mode:** body text 22 px, nothing under 15 px,
   the selection obvious from across the room (accent border and glow).
 - **Every screen ends in a bar of button hints**, using the controller's own
-  letters, so nothing has to be remembered. Touch works too: tap a row to
-  select it, tap again to act.
+  letters, so nothing has to be remembered. A button that changes something in
+  the header sits next to it instead: **L**, in the pill with the server's
+  address, opens the Servers screen. Touch works too: tap a row to select it,
+  tap again to act.
+- **Button glyphs look like the buttons:** circles for A, B, X, Y, + and −;
+  flat rounded shapes, with the outer top corner rounder, for the shoulder
+  buttons L, R, ZL and ZR.
 - **Say what happens before it happens**, and what changed after: the steps on
   the working screen, the toast with the file count, and asking before
   touching another mod's files.

@@ -295,6 +295,8 @@ class App {
             refresh();
         } else if (down & HidNpadButton_L) {
             open_servers();
+        } else if (down & HidNpadButton_ZL) {
+            check_for_update_now();
         } else if (down & (HidNpadButton_AnyDown | HidNpadButton_AnyUp)) {
             std::size_t before = v_.cursor;
             move(v_.cursor, v_.seeds.size(), down);
@@ -669,11 +671,15 @@ class App {
 
     // ---- updating the app (server ADR 0021) ---------------------------------------------
 
-    void check_for_update() {
-        app::Response r = http_.request("GET", url("/api/v1/app/latest"), "", config_->token);
+    // Asks the server about the app's latest release. With check_now, the server
+    // asks GitHub again rather than answer from its last check (server ADR 0022).
+    // Returns false if the server didn't answer.
+    bool check_for_update(bool check_now = false) {
+        const char* path = check_now ? "/api/v1/app/latest?check=true" : "/api/v1/app/latest";
+        app::Response r = http_.request("GET", url(path), "", config_->token);
         auto latest = r.status == 200 ? dreadovania::parse_app_latest(r.body) : std::nullopt;
         if (!latest) {
-            return;  // an older server without updates, or a hiccup: try again next refresh
+            return false;  // an older server without updates, or a hiccup: try again next refresh
         }
         latest_ = *latest;
         auto need = dreadovania::update_need(dreadovania::kVersion, latest_);
@@ -681,6 +687,23 @@ class App {
         bool newer = latest_.available &&
                      dreadovania::compare_versions(latest_.version, dreadovania::kVersion) > 0;
         v_.update_version = newer ? latest_.version : "";
+        return true;
+    }
+
+    // The "Check for updates" button: ask now, and say what was found.
+    void check_for_update_now() {
+        say("Checking for updates...", false);
+        render();
+        if (!check_for_update(true)) {
+            say("The server didn't say whether there's an update. It may be too old to "
+                "offer app updates.", true);
+        } else if (!v_.update_version.empty()) {
+            say("Version " + v_.update_version + " is ready: press - to update.", false);
+        } else if (latest_.available) {
+            say("This app is up to date (" + std::string(dreadovania::kVersion) + ").", false);
+        } else {
+            say("No update offered: " + latest_.reason + ".", false);
+        }
     }
 
     void update_app() {

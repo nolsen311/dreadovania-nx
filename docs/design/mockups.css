@@ -19,6 +19,13 @@ html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; backgrou
 .glyph { width: 30px; height: 30px; border-radius: 50%; background: var(--fg); color: var(--bg); font-weight: 800; font-size: 17px;
   display: inline-flex; align-items: center; justify-content: center; }
 .glyph.wide { width: auto; padding: 0 10px; border-radius: 15px; }
+/* Shoulder buttons (L, R, ZL, ZR): flatter, with the outer top corner rounder. */
+.glyph.shoulder { width: auto; min-width: 42px; height: 26px; padding: 0 12px; box-sizing: border-box; }
+.glyph.shoulder-l { border-radius: 12px 6px 6px 6px; }
+.glyph.shoulder-r { border-radius: 6px 12px 6px 6px; }
+/* The server in the header, with the button that changes it (ADR 0010). */
+.top .server.pill { border: 1px solid var(--line); background: var(--panel); border-radius: 22px;
+  padding: 8px 8px 8px 16px; }
 main { display: grid; grid-template-columns: 360px 1fr; min-height: 0; }
 aside { padding: 24px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 16px; }
 .section { padding: 24px 32px; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
