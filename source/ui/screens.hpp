@@ -47,6 +47,7 @@ struct View {
     std::string last_server;
     std::string typed_code;
     dreadovania::UserCa user_ca = dreadovania::UserCa::Missing;
+    bool applet_mode = false;  // opened from the Album: less memory, a game may be suspended
 
     std::string toast;
     bool toast_bad = false;

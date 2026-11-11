@@ -100,6 +100,13 @@ int main(int argc, char** argv) {
     failed.show_toast = true;
     shot("7-error", failed);
 
+    ui::View applet = library();
+    applet.applet_mode = true;
+    applet.toast = "Dread is running in the background. Close it first (press HOME, then X on Dread), then install. Nothing on the SD card was changed.";
+    applet.toast_bad = true;
+    applet.show_toast = true;
+    shot("9-applet-dread-running", applet);
+
     ui::View unpaired;
     shot("8-first-run", unpaired);
 

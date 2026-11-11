@@ -17,6 +17,7 @@
 #include "http.hpp"
 #include "installer.hpp"
 #include "jobs.hpp"
+#include "system.hpp"
 #include "ui/gfx.hpp"
 #include "ui/screens.hpp"
 #include "ui/widgets.hpp"
@@ -135,6 +136,7 @@ class App {
             return error;
         }
         net_error_ = http_.init();
+        v_.applet_mode = !app::system_state().app_is_application;
         config_ = load_config();
         v_.last_server = config_ ? config_->server : load_last_server();
         v_.screen = config_ ? Screen::Library : Screen::Pair;
@@ -370,6 +372,13 @@ class App {
     }
 
     // Whatever the selected seed still needs: finish generating, patch, then install.
+    // Why installing now would be unsafe (Dread suspended in the background), or nothing.
+    std::optional<std::string> install_blocked() {
+        app::SystemState state = app::system_state();
+        v_.applet_mode = !state.app_is_application;
+        return dreadovania::install_blocker(state.app_is_application, state.running_program);
+    }
+
     void get_selected() {
         if (v_.seeds.empty()) {
             say("No seeds yet. Press R to generate one.", false);
@@ -379,6 +388,12 @@ class App {
         if (seed.status == "failed" || seed.status == "cancelled") {
             say("This seed " + seed.status + " on the server. Press R for a new one.", true);
             return;
+        }
+        if (seed.status == "ready" && seed.mod_status == "ready") {
+            if (auto blocked = install_blocked()) {
+                say(*blocked, true);  // checked before anything starts
+                return;
+            }
         }
         std::size_t first = seed.status == "pending" ? 0 : seed.mod_status == "ready" ? 2 : 1;
         begin_work(seed.status == "ready" && seed.mod_status == "ready" ? "Installing your seed"
@@ -436,6 +451,11 @@ class App {
                 finish(seed.id, patched.message, !patched.stopped);
                 return;
             }
+        }
+        if (auto blocked = install_blocked()) {
+            finish(seed.id, *blocked + " The seed is patched: press A on it once Dread is closed.",
+                   true);
+            return;
         }
         step_to(2);
         app::InstallResult result = app::install_seed(
