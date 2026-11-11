@@ -37,6 +37,13 @@ mods' files are kept; it asks before replacing any). `*` marks the installed see
 
 Patching needs your game files on the server (its **Game files** page).
 
+**Several servers** ([ADR 0010](docs/adr/0010-several-servers-by-network.md)): press
+**L** for the Servers screen. **Y** pairs another server; pairing links the Wi-Fi
+you're on to it, and the app then uses that server whenever the Switch is on that
+network. **X** links or unlinks the current network, **A** switches to a server by
+hand, and **R** unpairs one. On a network that isn't linked, the app uses the
+server you used last, and says so at the bottom of the seed list.
+
 The touchscreen works too in handheld mode: tap a row to select it, tap it again
 to act on it.
 

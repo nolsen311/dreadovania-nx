@@ -14,7 +14,7 @@
 
 namespace ui {
 
-enum class Screen { Pair, Library, Presets, Working };
+enum class Screen { Pair, Library, Presets, Working, Servers };
 enum class Dialog { None, Replace, Unpair };
 
 struct Work {
@@ -26,11 +26,24 @@ struct Work {
     double fraction = -1;  // the download's progress, or -1
 };
 
+// One paired server, for the Servers screen (ADR 0010).
+struct ServerRow {
+    std::string address;
+    std::string name;  // what the server calls this Switch
+    std::vector<std::string> networks;
+    bool in_use = false;
+};
+
 struct View {
     Screen screen = Screen::Pair;
     Dialog dialog = Dialog::None;
     std::string server;  // shown at the top right; "" when not paired
     std::string server_note;  // why this server, when not by network (ADR 0010)
+    std::vector<ServerRow> servers;
+    std::size_t server_cursor = 0;
+    std::string network;          // the network the console is on, or ""
+    std::string unpair_target;    // the server the Unpair dialog is about
+    bool pairing_another = false;  // the Pair screen was opened from Servers
     bool connected = false;
 
     std::vector<dreadovania::SeedSummary> seeds;
