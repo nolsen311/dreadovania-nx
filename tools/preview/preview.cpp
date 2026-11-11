@@ -145,6 +145,11 @@ int main(int argc, char** argv) {
     not_linked.server_note = "Not linked to Cafe Guest";
     shot("13-library-not-linked", not_linked);
 
+    ui::View checked = not_linked;
+    checked.toast = "This app is up to date (0.6.0).";
+    checked.show_toast = true;
+    shot("15-checked-for-updates", checked);
+
     ui::View another;
     another.pairing_another = true;
     shot("14-pair-another", another);

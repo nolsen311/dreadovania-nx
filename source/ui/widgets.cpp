@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/widgets.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace ui {
@@ -60,7 +61,14 @@ void footer(Gfx& g, const std::string& left, const std::vector<Hint>& hints) {
     g.box(0, top, Gfx::kWidth, 1, 0, color::line);
     int cy = top + kFooter / 2;
     const int label_top = g.top_for_center(cy, kSmall + 1);
-    g.text(left, 32, label_top, kSmall + 1, color::muted, false, Align::Left, 420);
+    int hints_w = 0;
+    for (const Hint& h : hints) {
+        int gw = h.first.size() <= 1 ? 30 : g.measure(h.first, 17, true) + 20;
+        hints_w += g.measure(h.second, kSmall + 1) + gw + 8 + 28;
+    }
+    // The left text gets what the hints leave, so the two never overlap.
+    int left_w = std::max(1, Gfx::kWidth - 32 - hints_w - 32);  // 0 would mean no limit
+    g.text(left, 32, label_top, kSmall + 1, color::muted, false, Align::Left, left_w);
     int x = Gfx::kWidth - 32;
     for (auto it = hints.rbegin(); it != hints.rend(); ++it) {
         int label_w = g.measure(it->second, kSmall + 1);

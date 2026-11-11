@@ -142,6 +142,8 @@ static void draw_library(Gfx& g, const View& v) {
                                    {"L", "Servers"}, {"+", "Exit"}};
     if (!v.update_version.empty() || v.update_required) {
         hints.insert(hints.begin(), {"-", "Update"});
+    } else {
+        hints.insert(hints.end() - 1, {"ZL", "Updates"});
     }
     ui::footer(g, count, hints);
 }

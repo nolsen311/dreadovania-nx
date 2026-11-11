@@ -37,6 +37,10 @@ mods' files are kept; it asks before replacing any). `*` marks the installed see
 
 Patching needs your game files on the server (its **Game files** page).
 
+**Updates:** when your server has a newer app, the seed list shows it; press
+**−** to update in place. **ZL** checks for one right away (the server asks GitHub
+at most every 5 minutes).
+
 **Several servers** ([ADR 0010](docs/adr/0010-several-servers-by-network.md)): press
 **L** for the Servers screen. **Y** pairs another server; pairing links the Wi-Fi
 you're on to it, and the app then uses that server whenever the Switch is on that
