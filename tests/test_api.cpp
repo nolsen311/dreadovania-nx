@@ -204,6 +204,26 @@ TEST(untrusted_certificate_messages_say_what_to_check) {
           std::string::npos);
 }
 
+TEST(untrusted_after_mozilla_roots_says_so) {
+    std::string both = untrusted_certificate_message("", UserCa::Missing, "", true);
+    CHECK(both.find("by the Switch or by Mozilla's public roots") != std::string::npos);
+    CHECK(untrusted_certificate_message("", UserCa::Missing, "").find("Mozilla") ==
+          std::string::npos);
+}
+
+TEST(origins_of_urls) {
+    CHECK(origin_of("https://Dread.Example.com/api/v1/seeds?x=1") ==
+          "https://dread.example.com");
+    CHECK(origin_of("HTTPS://dread.example.com:8443") == "https://dread.example.com:8443");
+    CHECK(origin_of("https://[::1]:8080/x") == "https://[::1]:8080");
+    CHECK(origin_of("https://a.example#frag") == "https://a.example");
+    CHECK(origin_of("http://dread.example.com/").empty());  // never plain HTTP
+    CHECK(origin_of("https://").empty());
+    CHECK(origin_of("https:///path").empty());
+    CHECK(origin_of("https://user@host/").empty());
+    CHECK(origin_of("dread.example.com").empty());
+}
+
 TEST(pem_files_are_split_one_certificate_each) {
     const std::string one = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----";
     const std::string two = "-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----";
