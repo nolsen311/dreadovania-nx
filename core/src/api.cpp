@@ -336,6 +336,41 @@ std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca
     return out;
 }
 
+std::string client_certificate_message(std::string_view tls_detail, bool has_certificate) {
+    std::string why = tls_detail.empty() ? "" : " (" + std::string(tls_detail) + ")";
+    if (has_certificate) {
+        return "the server didn't accept this Switch's client certificate" + why +
+               ": it may have been revoked, or have expired. Pair this Switch again";
+    }
+    return "the server asked for a client certificate, and this Switch doesn't have "
+           "one for it yet" +
+           why +
+           ". Pair through an address that doesn't ask for one: behind Cloudflare, "
+           "a hostname that isn't in its client-certificate (mTLS) list. The server's "
+           "Secure remote access guide explains how";
+}
+
+std::string attempts_summary(const std::vector<std::pair<std::string, std::string>>& tried) {
+    if (tried.size() < 2) {
+        return "";
+    }
+    bool same = true;
+    for (const auto& t : tried) {
+        same = same && t.second == tried.front().second;
+    }
+    std::string out = ". Tried: ";
+    for (std::size_t i = 0; i < tried.size(); ++i) {
+        out += (i ? "; " : "") + tried[i].first;
+        if (!same) {
+            out += ": " + tried[i].second;
+        }
+    }
+    if (same) {
+        out += ". All: " + tried.front().second;
+    }
+    return out;
+}
+
 std::optional<std::string> problem_detail(std::string_view body) {
     json::ParseResult parsed = json::parse(body);
     if (!parsed.value || !parsed.value->is_object()) {
