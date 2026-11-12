@@ -18,6 +18,35 @@ generate seeds, download them, and swap them in and out with one action.
 - Installs seeds the same way as the server's "Send to Switch", so the two can be mixed.
 - (Later) Back up and swap save data per seed.
 
+## Installing
+
+1. Download `dreadovania.nro` from the latest
+   [release](https://github.com/nolsen311/dreadovania-nx/releases/latest), and
+   check it came from this repository's release workflow:
+
+   ```bash
+   gh attestation verify dreadovania.nro --repo nolsen311/dreadovania-nx
+   ```
+
+2. Copy it to `/switch/` on the SD card.
+3. **If you copy over USB** (hekate's USB mass storage, or similar), eject the SD
+   card on the computer before you leave USB mode. The computer holds writes back,
+   and leaving USB mode first can leave the file half-written: the right size, with
+   part of it zeros. A damaged file looks like a broken app: it closes as soon as
+   it starts, or shows error 2168-0002 from the Album.
+4. If the app won't start, check the copy on the card. Mount the card again (so
+   the computer reads the card, not what it cached) and compare with the release's
+   `dreadovania.nro.sha256`:
+
+   ```bash
+   sha256sum /path/to/sd/switch/dreadovania.nro
+   ```
+
+   If it differs, copy the file again and eject before leaving USB mode.
+
+Updates from inside the app (below) check the download's SHA-256 before
+installing it, so they don't need these steps.
+
 ## Using it
 
 1. Your server must be reachable over **HTTPS** at a hostname
