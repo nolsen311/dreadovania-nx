@@ -18,3 +18,4 @@ supersedes the old one; don't rewrite history.
 | [0010](0010-several-servers-by-network.md) | Several servers, picked by the network the Switch is on | Proposed |
 | [0011](0011-signoff-stacked-pull-requests.md) | `/signoff` for stacked pull requests | Proposed |
 | [0012](0012-client-certificates.md) | Client certificates for secure remote access | Proposed |
+| [0013](0013-mozilla-roots.md) | Mozilla's root store, imported one certificate at a time | Proposed |
