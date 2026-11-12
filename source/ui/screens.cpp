@@ -277,7 +277,10 @@ static void draw_servers(Gfx& g, const View& v) {
     }
     bool here = !v.network.empty() &&
                 std::find(s.networks.begin(), s.networks.end(), v.network) != s.networks.end();
-    std::vector<ui::Hint> hints = {{"A", s.in_use ? "Back to seeds" : "Use it"}};
+    std::vector<ui::Hint> hints;
+    if (!s.in_use) {  // for the one in use, A would only repeat B
+        hints.push_back({"A", "Use it"});
+    }
     if (!v.network.empty()) {
         hints.push_back({"X", here ? "Unlink this network" : "Link this network"});
     }
