@@ -105,7 +105,7 @@ std::string short_result(CURLcode code, const char* detail) {
             out = curl_easy_strerror(code);
     }
     std::string why(detail);
-    if (!why.empty() && code != CURLE_PEER_FAILED_VERIFICATION) {
+    if (!why.empty()) {  // e.g. "verify 0x..., RSA cert" from our curl patch (ADR 0015)
         if (std::size_t libnx = why.find("libnx: "); libnx != std::string::npos) {
             why = why.substr(libnx + 7);  // just the result code
         }

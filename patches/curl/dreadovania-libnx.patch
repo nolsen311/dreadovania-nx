@@ -4,7 +4,8 @@
 # option, and load_capath closes the CA folder when it returns early. It also
 # drops CURL_RUN_IFELSE's AC_REQUIRE([AC_RUN_IFELSE]): with autoconf 2.70+
 # (Debian bookworm's), that fails every cross build (curl removed it in later
-# releases).
+# releases). On a failed verification it reports the TLS service's error and
+# the server certificate's key type (RSA, ECDSA P-256 or P-384).
 
 --- a/lib/vtls/libnx.c
 +++ b/lib/vtls/libnx.c
@@ -16,7 +17,44 @@
  
  #undef BIT
  
-@@ -150,8 +151,11 @@
+@@ -101,6 +102,36 @@
+   return TRUE;
+ }
+ 
++/* Dreadovania: the server certificate's key type, from the chain the TLS
++ * service returned (SslOptionType_GetServerCertChain), by its first key OID. */
++static const char *libnx_peer_key(const u8 *buf, size_t size)
++{
++  static const u8 rsa[] = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D,
++                           0x01, 0x01, 0x01};
++  static const u8 ec[] = {0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01};
++  static const u8 p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03,
++                            0x01, 0x07};
++  static const u8 p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
++  size_t i;
++  if(!buf || !size)
++    return "no chain";
++  for(i = 0; i + sizeof(rsa) <= size; i++) {
++    if(!memcmp(buf + i, rsa, sizeof(rsa)))
++      return "RSA cert";
++    if(!memcmp(buf + i, ec, sizeof(ec))) {
++      const u8 *curve = buf + i + sizeof(ec);
++      if(i + sizeof(ec) + sizeof(p256) <= size &&
++         !memcmp(curve, p256, sizeof(p256)))
++        return "ECDSA P-256 cert";
++      if(i + sizeof(ec) + sizeof(p384) <= size &&
++         !memcmp(curve, p384, sizeof(p384)))
++        return "ECDSA P-384 cert";
++      return "ECDSA cert";
++    }
++  }
++  return "no chain";
++}
++
+ static CURLcode load_capath(struct Curl_easy *data, SslContext *context,
+                             const char *path, const bool verifypeer)
+ {
+@@ -150,8 +181,11 @@
        failf(data, "Error reading ca path file %s",
              tmp_path);
  
@@ -29,7 +67,7 @@
      }
  
      rc = sslContextImportServerPki(context, tmpbuf, tmpbuf_size,
-@@ -162,8 +166,10 @@
+@@ -162,8 +196,10 @@
        failf(data, "Error importing ca path file %s - libnx: 0x%X",
              tmp_path, rc);
  
@@ -41,7 +79,7 @@
      }
    }
  
-@@ -422,6 +428,29 @@
+@@ -422,6 +458,29 @@
      rc = sslConnectionSetOption(&BACKEND->conn,
                                  SslOptionType_GetServerCertChain, TRUE);
  
@@ -71,6 +109,17 @@
    if(R_SUCCEEDED(rc)) {
      u32 verifyopt = SslVerifyOption_DateCheck;
      if(verifypeer) verifyopt |= SslVerifyOption_PeerCa;
+@@ -775,6 +834,10 @@
+     return CURLE_OK;
+   if(retcode == CURLE_PEER_FAILED_VERIFICATION) {
+     rc = sslConnectionGetVerifyCertError(&BACKEND->conn);
++    /* Dreadovania: say why, and what kind of certificate the server sent:
++     * the first key-type OID in the chain is the server's own. */
++    failf(data, "verify 0x%X, %s", rc, libnx_peer_key(BACKEND->certbuf,
++                                                      BACKEND->certbuf_size));
+     if(R_VALUE(rc) != MAKERESULT(123, 301) &&
+        R_VALUE(rc) != MAKERESULT(123, 303) &&
+        R_VALUE(rc) != MAKERESULT(123, 304)) {
 --- a/m4/curl-functions.m4
 +++ b/m4/curl-functions.m4
 @@ -7289,7 +7289,6 @@
