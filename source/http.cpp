@@ -78,6 +78,55 @@ std::string switch_time_utc() {
     return text;
 }
 
+// curl's progress callback: let the screen move while a request waits.
+int on_wait(void* hook, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    (*static_cast<std::function<void()>*>(hook))();
+    return 0;  // carry on
+}
+
+// One attempt's result, briefly, for the list in the error message (ADR 0015).
+std::string short_result(CURLcode code, const char* detail) {
+    std::string out;
+    switch (code) {
+        case CURLE_PEER_FAILED_VERIFICATION:
+        case CURLE_SSL_CERTPROBLEM:
+            out = "not trusted";
+            break;
+        case CURLE_SSL_CACERT_BADFILE:
+            out = "roots not loaded";
+            break;
+        case CURLE_SSL_CIPHER:
+            out = "cipher refused";
+            break;
+        case CURLE_SSL_CONNECT_ERROR:
+            out = "TLS error";
+            break;
+        default:
+            out = curl_easy_strerror(code);
+    }
+    std::string why(detail);
+    if (!why.empty() && code != CURLE_PEER_FAILED_VERIFICATION) {
+        if (std::size_t libnx = why.find("libnx: "); libnx != std::string::npos) {
+            why = why.substr(libnx + 7);  // just the result code
+        }
+        out += " (" + why.substr(0, 60) + ")";
+    }
+    return out;
+}
+
+// " Tried: Switch: not trusted; own CA, RSA: cipher refused (0x...)" when more
+// than one attempt was made, so a failure says what each one did.
+std::string attempts_summary(const std::vector<std::string>& tried) {
+    if (tried.size() < 2) {
+        return "";
+    }
+    std::string out = ". Tried: ";
+    for (std::size_t i = 0; i < tried.size(); ++i) {
+        out += (i ? "; " : "") + tried[i];
+    }
+    return out;
+}
+
 // The TLS service didn't trust the server's certificate (see describe()).
 bool untrusted(CURLcode code) {
     return code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CERTPROBLEM ||
@@ -132,7 +181,7 @@ std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca,
 
 }  // namespace
 
-std::string Http::init() {
+std::string Http::init(const std::function<void(const std::string&)>& on_step) {
     if (R_FAILED(socketInitializeDefault())) {
         return "networking couldn't start";
     }
@@ -162,14 +211,15 @@ std::string Http::init() {
         user_ca_count_ = user_certs.size();
         ca_dir_ = kUserCaDir;
     }
-    prepare_public_roots(user_certs);
+    prepare_public_roots(user_certs, on_step);
     plan_attempts();
     agent_ = "Dreadovania-NX/" + std::string(dreadovania::kVersion);
     ready_ = true;
     return "";
 }
 
-void Http::prepare_public_roots(const std::vector<std::string>& user_certs) {
+void Http::prepare_public_roots(const std::vector<std::string>& user_certs,
+                                const std::function<void(const std::string&)>& on_step) {
     // Mozilla's roots in batches, each with the user's CA, rewritten only when the
     // bundle or ca.pem changes, so the SD card isn't written ~120 files at every
     // start (ADRs 0013 and 0014).
@@ -195,6 +245,9 @@ void Http::prepare_public_roots(const std::vector<std::string>& user_certs) {
     std::string stamp = hash.hex();
     std::string written;
     if (!read_file(kPublicCaStamp, written) || written != stamp) {
+        if (on_step) {
+            on_step("Preparing trusted certificates...");
+        }
         std::remove(kPublicCaStamp);  // half-written folders: not used until finished
         clear_folder(kPublicCaDir);   // 0.8.0's single folder, which was too big
         rmdir(kPublicCaDir);
@@ -205,6 +258,10 @@ void Http::prepare_public_roots(const std::vector<std::string>& user_certs) {
             }
         }
         for (std::size_t i = 0; i < batches.size(); ++i) {
+            if (on_step) {
+                on_step("Preparing trusted certificates (" + std::to_string(i + 1) + " of " +
+                        std::to_string(batches.size()) + ")...");
+            }
             std::string folder = batch_folder(i);
             mkdir(folder.c_str(), 0777);
             for (std::size_t k = 0; k < batches[i].size(); ++k) {
@@ -247,6 +304,20 @@ void Http::plan_attempts() {
 const Http::Attempt* Http::attempt_for(const std::string& url) const {
     auto it = attempt_of_.find(dreadovania::origin_of(url));
     return it != attempt_of_.end() ? &attempts_[it->second] : nullptr;
+}
+
+std::string Http::attempt_label(const std::string& url) const {
+    const Attempt* attempt = attempt_for(url);
+    if (attempt == nullptr) {
+        return "Switch";
+    }
+    std::string where = "own CA";
+    for (std::size_t i = 0; i < public_ca_dirs_.size(); ++i) {
+        if (attempt->folder == &public_ca_dirs_[i]) {
+            where = "roots " + std::to_string(i + 1);
+        }
+    }
+    return attempt->rsa ? where + ", RSA" : where;
 }
 
 bool Http::with_public_roots(const std::string& url) const {
@@ -339,6 +410,11 @@ void Http::setup(const std::string& url, const char* method, curl_slist* headers
         curl_easy_setopt(curl, CURLOPT_KEYPASSWD, cert_password_.c_str());
     }
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);  // the API never redirects
+    if (wait_hook_) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, on_wait);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &wait_hook_);
+    }
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, detail);
@@ -368,6 +444,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
     char detail[CURL_ERROR_SIZE] = {};
     CURLcode code = CURLE_OK;
     bool retried = false;
+    std::vector<std::string> tried;  // each failed attempt, for the message
     do {
         // A certificate is checked before anything is sent, so trying again is safe.
         if (code != CURLE_OK) {
@@ -375,6 +452,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
             response.body.clear();
             detail[0] = '\0';
         }
+        std::string label = attempt_label(url);
         setup(url, method_str.c_str(), list, detail);
         curl_easy_setopt(handle_, CURLOPT_TIMEOUT, 30L);
         curl_easy_setopt(handle_, CURLOPT_WRITEFUNCTION, on_data);
@@ -384,6 +462,9 @@ Response Http::request(std::string_view method, const std::string& url, const st
             curl_easy_setopt(handle_, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
         }
         code = curl_easy_perform(handle_);
+        if (code != CURLE_OK) {
+            tried.push_back(label + ": " + short_result(code, detail));
+        }
     } while (try_next(code, url));
     if (code == CURLE_OK) {
         curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
@@ -391,7 +472,8 @@ Response Http::request(std::string_view method, const std::string& url, const st
         response.error = "the server's answer was too large";
     } else {
         response.error = describe(code, detail, user_ca_, !cert_path_.empty(),
-                                  retried || with_public_roots(url));
+                                  retried || with_public_roots(url)) +
+                         attempts_summary(tried);
     }
     curl_slist_free_all(list);
     return response;
@@ -447,6 +529,7 @@ Response Http::download(const std::string& url, const std::string& token,
     Stream stream{&on_data, &on_progress, 0, 0, nullptr, false, {}};
     CURLcode code = CURLE_OK;
     bool retried = false;
+    std::vector<std::string> tried;
     do {
         // The certificate is checked before any data arrives, so on_data hasn't
         // been called when trying again with Mozilla's roots (ADR 0013).
@@ -454,6 +537,7 @@ Response Http::download(const std::string& url, const std::string& token,
             retried = true;
             detail[0] = '\0';
         }
+        std::string label = attempt_label(url);
         setup(url, "GET", list, detail);
         stream = Stream{&on_data, &on_progress, 0, 0, handle_, false, {}};
         // No overall time limit for a download; give up if it stalls for 30 seconds.
@@ -462,11 +546,15 @@ Response Http::download(const std::string& url, const std::string& token,
         curl_easy_setopt(handle_, CURLOPT_WRITEFUNCTION, on_stream);
         curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &stream);
         code = curl_easy_perform(handle_);
+        if (code != CURLE_OK) {
+            tried.push_back(label + ": " + short_result(code, detail));
+        }
     } while (stream.received == 0 && try_next(code, url));
     curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     if (code != CURLE_OK && !stream.stopped) {
         response.error = describe(code, detail, user_ca_, !cert_path_.empty(),
-                                  retried || with_public_roots(url));
+                                  retried || with_public_roots(url)) +
+                         attempts_summary(tried);
     }
     response.body = std::move(stream.error_body);
     curl_slist_free_all(list);
