@@ -92,11 +92,20 @@ cmake -S tools/preview -B build-preview && cmake --build build-preview
 SDL_VIDEODRIVER=offscreen DREADOVANIA_FONT=/path/to/font.ttf build-preview/preview /tmp
 ```
 
-The app keeps its settings in `/config/dreadovania/device.json`. If your server
+The app keeps its settings in `/config/dreadovania/servers.json`. If your server
 uses a certificate from your own certificate authority, copy that CA's
 certificate (and any intermediates) to `/config/dreadovania/ca.pem`: the app
 trusts it in addition to the Switch's own trusted authorities. Certificates are
 always checked.
+
+**Secure remote access** (the server's ADR 0023): if your server only lets in
+devices with a certificate from it, pairing gives the Switch one, and the app
+presents it on every connection and renews it by itself
+([ADR 0012](docs/adr/0012-client-certificates.md)). Pair through the address the
+server shows next to the pairing code. To use a certificate from your own CA
+instead, put it on the SD card as `/config/dreadovania/certificates/<host>.p12`,
+with its password in `<host>.password` (for `https://dread.example.com:8443`, the
+host is `dread.example.com_8443`).
 
 ## Building
 
