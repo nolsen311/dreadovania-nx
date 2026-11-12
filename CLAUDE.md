@@ -57,7 +57,8 @@ They exist so that the project's history is a trustworthy audit trail.
 - **Branding:** "Dreadovania". No "Metroid" in names, and original icon art only.
 - **API contract:** the server's `docs/openapi.json` is the contract. Build
   against a pinned version of it, never against undocumented behaviour.
-- **TLS:** always verify certificates, using a bundled root CA store. Never add
-  an option to ignore certificate errors.
+- **TLS:** always verify certificates, against the Switch's own trusted roots
+  plus the user's CA from `ca.pem` (ADR 0016). Never add an option to ignore
+  certificate errors.
 - **SimpleModManager:** stay compatible with its library layout; check the
   license of any code reused from it and credit it.

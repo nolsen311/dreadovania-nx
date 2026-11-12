@@ -169,13 +169,10 @@ int main(int argc, char** argv) {
     failed_pairing.last_server = "https://dread.example.com";
     failed_pairing.typed_code = "GW3YW6P6";
     failed_pairing.toast =
-        "Not paired: the server's certificate isn't trusted, by the Switch or by Mozilla's "
-        "public roots. Your CA from /config/dreadovania/ca.pem was used. Also check the "
-        "Switch's date and time (it says 2026-11-12 19:47 UTC): a new certificate looks \"not "
-        "yet valid\" to a clock that is behind. Tried: Switch: not trusted; own CA, RSA: not "
-        "trusted; roots 1: not trusted; roots 1, RSA: cipher refused (0x1B47B); roots 2: not "
-        "trusted; roots 2, RSA: not trusted; roots 3: not trusted; roots 3, RSA: not trusted; "
-        "roots 4: not trusted; roots 4, RSA: not trusted";
+        "Not paired: the server's certificate isn't trusted. Your CA from "
+        "/config/dreadovania/ca.pem was used. Also check the Switch's date and time (it says "
+        "2026-11-12 19:47 UTC): a new certificate looks \"not yet valid\" to a clock that is "
+        "behind. Tried: Switch; own CA, RSA. All: not trusted";
     failed_pairing.toast_bad = true;
     failed_pairing.show_toast = true;
     shot("18-pairing-attempts", failed_pairing);
