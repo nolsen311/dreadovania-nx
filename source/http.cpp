@@ -163,6 +163,7 @@ std::string Http::init() {
         ca_dir_ = kUserCaDir;
     }
     prepare_public_roots(user_certs);
+    plan_attempts();
     agent_ = "Dreadovania-NX/" + std::string(dreadovania::kVersion);
     ready_ = true;
     return "";
@@ -227,30 +228,55 @@ void Http::prepare_public_roots(const std::vector<std::string>& user_certs) {
     }
 }
 
-const std::string& Http::ca_folder_for(const std::string& url) const {
-    auto it = public_batch_.find(dreadovania::origin_of(url));
-    return it != public_batch_.end() ? public_ca_dirs_[it->second] : ca_dir_;
+void Http::plan_attempts() {
+    // After the first try (the Switch's roots and the user's CA), each folder in
+    // turn, plainly and then asking for RSA: a server whose ECDSA chain the
+    // Switch can't check may have an RSA one too, as Cloudflare does (ADR 0015).
+    bool rsa = hosversionAtLeast(17, 0, 0);  // libnx's SetCipher option
+    if (rsa) {
+        attempts_.push_back({&ca_dir_, true});
+    }
+    for (const std::string& folder : public_ca_dirs_) {
+        attempts_.push_back({&folder, false});
+        if (rsa) {
+            attempts_.push_back({&folder, true});
+        }
+    }
+}
+
+const Http::Attempt* Http::attempt_for(const std::string& url) const {
+    auto it = attempt_of_.find(dreadovania::origin_of(url));
+    return it != attempt_of_.end() ? &attempts_[it->second] : nullptr;
 }
 
 bool Http::with_public_roots(const std::string& url) const {
-    return public_batch_.count(dreadovania::origin_of(url)) != 0;
+    return attempt_of_.count(dreadovania::origin_of(url)) != 0;
 }
 
-bool Http::next_public_batch(const std::string& url) {
-    // After the Switch's roots and the user's CA, each batch of Mozilla's roots in
-    // turn; the one that works is remembered for the server (ADR 0014).
+bool Http::next_attempt(const std::string& url) {
+    // The one that works is remembered for the server until the app restarts
+    // (ADRs 0014, 0015). Every attempt verifies the certificate fully.
     std::string origin = dreadovania::origin_of(url);
-    if (public_ca_dirs_.empty() || origin.empty()) {
+    if (attempts_.empty() || origin.empty()) {
         return false;
     }
-    auto it = public_batch_.find(origin);
-    std::size_t next = it == public_batch_.end() ? 0 : it->second + 1;
-    if (next >= public_ca_dirs_.size()) {
-        public_batch_.erase(origin);  // none helped: start plainly next time
+    auto it = attempt_of_.find(origin);
+    std::size_t next = it == attempt_of_.end() ? 0 : it->second + 1;
+    if (next >= attempts_.size()) {
+        attempt_of_.erase(origin);  // none helped: start plainly next time
         return false;
     }
-    public_batch_[origin] = next;
+    attempt_of_[origin] = next;
     return true;
+}
+
+bool Http::try_next(int result, const std::string& url) {
+    auto code = static_cast<CURLcode>(result);
+    // Untrusted, or an RSA attempt the TLS service turned down: try the next one.
+    const Attempt* current = attempt_for(url);
+    bool rsa_refused = current != nullptr && current->rsa &&
+                       (code == CURLE_SSL_CIPHER || code == CURLE_SSL_CONNECT_ERROR);
+    return (untrusted(code) || rsa_refused) && next_attempt(url);
 }
 
 void Http::shutdown() {
@@ -294,9 +320,15 @@ void Http::setup(const std::string& url, const char* method, curl_slist* headers
     // No CA file: the Switch's trusted roots, plus the user's CA if there is one,
     // plus Mozilla's roots for a server that needed them (ADR 0013).
     curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
-    const std::string& folder = ca_folder_for(url);
+    const Attempt* attempt = attempt_for(url);
+    const std::string& folder = attempt != nullptr ? *attempt->folder : ca_dir_;
     if (!folder.empty()) {
         curl_easy_setopt(curl, CURLOPT_CAPATH, folder.c_str());
+    }
+    if (attempt != nullptr && attempt->rsa) {
+        // One suite, ECDHE-RSA-AES128-GCM-SHA256, by its IANA number: our curl
+        // patch passes it to libnx's SetCipher (ADR 0015). TLS 1.2 only, as below.
+        curl_easy_setopt(curl, CURLOPT_SSL_CIPHER_LIST, "0xC02F");
     }
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
     if (!cert_path_.empty()) {
@@ -352,7 +384,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
             curl_easy_setopt(handle_, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
         }
         code = curl_easy_perform(handle_);
-    } while (untrusted(code) && next_public_batch(url));
+    } while (try_next(code, url));
     if (code == CURLE_OK) {
         curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     } else if (sink.too_big) {
@@ -430,7 +462,7 @@ Response Http::download(const std::string& url, const std::string& token,
         curl_easy_setopt(handle_, CURLOPT_WRITEFUNCTION, on_stream);
         curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &stream);
         code = curl_easy_perform(handle_);
-    } while (untrusted(code) && stream.received == 0 && next_public_batch(url));
+    } while (stream.received == 0 && try_next(code, url));
     curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     if (code != CURLE_OK && !stream.stopped) {
         response.error = describe(code, detail, user_ca_, !cert_path_.empty(),

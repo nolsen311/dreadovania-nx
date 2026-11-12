@@ -38,7 +38,9 @@ ASFLAGS  := -g $(ARCH)
 LDFLAGS   = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS     := -lcurl -lSDL2_ttf -lharfbuzz -lfreetype -lbz2 -lpng16 -lSDL2_gfx -lSDL2 \
             -lEGL -lglapi -ldrm_nouveau -lz -lnx
-LIBDIRS  := $(PORTLIBS) $(LIBNX)
+# Our own libcurl build comes first (scripts/build-curl.sh, ADR 0015).
+CURL_PREFIX := $(TOPDIR)/build-curl/prefix
+LIBDIRS  := $(CURL_PREFIX) $(PORTLIBS) $(LIBNX)
 
 #---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
@@ -64,13 +66,17 @@ export NROFLAGS    += --icon=$(APP_ICON) --nacp=$(CURDIR)/$(TARGET).nacp --romfs
 
 all: $(BUILD)
 
-$(BUILD):
+$(CURL_PREFIX)/lib/libcurl.a: scripts/build-curl.sh patches/curl/dreadovania-libnx.patch
+	@scripts/build-curl.sh
+
+$(BUILD): $(CURL_PREFIX)/lib/libcurl.a
 	@mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf
+	@echo "(build-curl/ is kept; delete it to rebuild libcurl)"
 
 #---------------------------------------------------------------------------------
 else
