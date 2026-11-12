@@ -95,8 +95,11 @@ SDL_VIDEODRIVER=offscreen DREADOVANIA_FONT=/path/to/font.ttf build-preview/previ
 The app keeps its settings in `/config/dreadovania/servers.json`. If your server
 uses a certificate from your own certificate authority, copy that CA's
 certificate (and any intermediates) to `/config/dreadovania/ca.pem`: the app
-trusts it in addition to the Switch's own trusted authorities. Certificates are
-always checked.
+trusts it in addition to the Switch's own trusted authorities. A public
+certificate the Switch doesn't recognise, such as Let's Encrypt's newer ones
+behind Cloudflare, is checked against Mozilla's root store, which the app
+includes ([ADR 0013](docs/adr/0013-mozilla-roots.md)). Certificates are always
+checked.
 
 **Secure remote access** (the server's ADR 0023): if your server only lets in
 devices with a certificate from it, pairing gives the Switch one, and the app

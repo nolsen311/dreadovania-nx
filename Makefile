@@ -21,6 +21,7 @@ SOURCES     := source source/ui core/src
 DATA        :=
 INCLUDES    := core/include source
 ICON        := icon.jpg
+ROMFS       := romfs
 APP_TITLE   := Dreadovania
 APP_AUTHOR  := Dreadovania contributors
 APP_VERSION := $(VERSION_STRING)
@@ -57,7 +58,7 @@ export INCLUDE     := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                       -I$(CURDIR)/$(BUILD)
 export LIBPATHS    := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 export APP_ICON    := $(TOPDIR)/$(ICON)
-export NROFLAGS    += --icon=$(APP_ICON) --nacp=$(CURDIR)/$(TARGET).nacp
+export NROFLAGS    += --icon=$(APP_ICON) --nacp=$(CURDIR)/$(TARGET).nacp --romfsdir=$(CURDIR)/$(ROMFS)
 
 .PHONY: $(BUILD) clean all
 

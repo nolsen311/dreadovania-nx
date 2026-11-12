@@ -306,12 +306,13 @@ UserCa classify_user_ca(std::string_view file_contents, bool exists) {
 }
 
 std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
-                                          std::string_view switch_time_utc) {
+                                          std::string_view switch_time_utc,
+                                          bool public_roots_tried) {
     std::string out = "the server's certificate isn't trusted";
     if (!tls_detail.empty()) {
         out += " (" + std::string(tls_detail) + ")";
     }
-    out += ". ";
+    out += public_roots_tried ? ", by the Switch or by Mozilla's public roots. " : ". ";
     switch (ca) {
         case UserCa::Loaded:
             out += "Your CA from /config/dreadovania/ca.pem was used. ";
@@ -504,6 +505,31 @@ UpdateNeed update_need(std::string_view current, const AppLatest& latest) {
         return UpdateNeed::Available;
     }
     return UpdateNeed::None;
+}
+
+std::string origin_of(std::string_view url) {
+    constexpr std::string_view kScheme = "https://";
+    if (url.size() <= kScheme.size()) {
+        return "";
+    }
+    std::string lower;
+    for (char c : url.substr(0, kScheme.size())) {
+        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (lower != kScheme) {
+        return "";
+    }
+    std::string_view rest = url.substr(kScheme.size());
+    std::size_t end = rest.find_first_of("/?#");
+    std::string_view authority = rest.substr(0, end);
+    if (authority.empty() || authority.find('@') != std::string_view::npos) {
+        return "";
+    }
+    std::string out(kScheme);
+    for (char c : authority) {
+        out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out;
 }
 
 }  // namespace dreadovania

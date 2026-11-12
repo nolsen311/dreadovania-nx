@@ -150,8 +150,14 @@ std::vector<std::string> split_pem_certificates(std::string_view text);
 
 // Why a certificate wasn't trusted, with what to check. `tls_detail` is the TLS
 // library's own reason (may be empty); `switch_time_utc` is the console's clock.
+// `public_roots_tried`: Mozilla's roots were tried as well (ADR 0013).
 std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
-                                          std::string_view switch_time_utc);
+                                          std::string_view switch_time_utc,
+                                          bool public_roots_tried = false);
+
+// "https://host[:port]" of a URL, lower-cased, without path or query; "" if it
+// isn't an https URL. Used to remember which servers need Mozilla's roots.
+std::string origin_of(std::string_view url);
 
 // The "detail" (or "title") of an RFC 9457 problem response, if there is one.
 std::optional<std::string> problem_detail(std::string_view body);

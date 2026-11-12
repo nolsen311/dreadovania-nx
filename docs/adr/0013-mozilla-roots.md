@@ -31,8 +31,8 @@ to avoid.
 We don't know two things about the ssl service, which only the console can tell
 us:
 
-1. How long importing about 120 certificates (118 in the pinned release) takes. The backend imports the whole
-   `CURLOPT_CAPATH` folder on every new connection.
+1. How long importing the 118 certificates of the pinned release takes. The
+   backend imports the whole `CURLOPT_CAPATH` folder on every new connection.
 2. Whether a context has a limit on imported certificates.
 
 ## Decision
