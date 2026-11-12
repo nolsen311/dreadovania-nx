@@ -1,6 +1,6 @@
 # 0014. Mozilla's roots in batches of 32
 
-- Status: Proposed
+- Status: Superseded by [0016](0016-switch-roots-only.md)
 - Date: 2026-11-12
 - Supersedes: [0013](0013-mozilla-roots.md), decision 2 (all of Mozilla's roots in
   one folder). ADR 0013's other decisions stand.

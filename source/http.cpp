@@ -12,7 +12,6 @@
 #include <fstream>
 #include <sstream>
 
-#include "dreadovania/sha256.hpp"
 #include "dreadovania/version.hpp"
 
 namespace app {
@@ -24,20 +23,11 @@ constexpr const char* kUserCa = "sdmc:/config/dreadovania/ca.pem";
 // certificate per call, and curl's libnx backend imports each file in
 // CURLOPT_CAPATH separately (ADR 0006).
 constexpr const char* kUserCaDir = "sdmc:/config/dreadovania/trusted";
-// Mozilla's roots (romfs/cacert.pem) and the user's CA, one certificate per
-// file, for servers the Switch's own roots don't cover (ADR 0013). The stamp is
-// kept outside the folder: the TLS backend imports every file in it.
-constexpr const char* kBundledRoots = "romfs:/cacert.pem";
-// One folder per batch of at most kRootsPerBatch roots, plus the user's CA: the
-// TLS service refuses to import more than about 70 into a connection (ADR 0014).
-constexpr const char* kPublicCaDir = "sdmc:/config/dreadovania/trusted-public";
-constexpr const char* kPublicCaStamp = "sdmc:/config/dreadovania/trusted-public.stamp";
-constexpr std::size_t kRootsPerBatch = 32;
-constexpr std::size_t kMaxBatchFolders = 16;  // folders of an older batch size are cleared too
-
-std::string batch_folder(std::size_t i) {
-    return std::string(kPublicCaDir) + "-" + std::to_string(i);
-}
+// Where 0.8.0 and 0.8.1 kept Mozilla's roots (ADRs 0013 and 0014, superseded by
+// 0016): removed at start, to give the SD card its ~120 files back.
+constexpr const char* kOldPublicCaDir = "sdmc:/config/dreadovania/trusted-public";
+constexpr const char* kOldPublicCaStamp = "sdmc:/config/dreadovania/trusted-public.stamp";
+constexpr std::size_t kOldBatchFolders = 16;
 constexpr std::size_t kMaxBody = 4 * 1024 * 1024;
 
 bool read_file(const char* path, std::string& out) {
@@ -89,8 +79,10 @@ std::string short_result(CURLcode code, const char* detail) {
     std::string out;
     switch (code) {
         case CURLE_PEER_FAILED_VERIFICATION:
-        case CURLE_SSL_CERTPROBLEM:
             out = "not trusted";
+            break;
+        case CURLE_SSL_CERTPROBLEM:
+            out = "client certificate";
             break;
         case CURLE_SSL_CACERT_BADFILE:
             out = "roots not loaded";
@@ -105,7 +97,7 @@ std::string short_result(CURLcode code, const char* detail) {
             out = curl_easy_strerror(code);
     }
     std::string why(detail);
-    if (!why.empty() && code != CURLE_PEER_FAILED_VERIFICATION) {
+    if (!why.empty()) {  // e.g. "verify 0x..., RSA cert" from our curl patch (ADR 0015)
         if (std::size_t libnx = why.find("libnx: "); libnx != std::string::npos) {
             why = why.substr(libnx + 7);  // just the result code
         }
@@ -114,23 +106,12 @@ std::string short_result(CURLcode code, const char* detail) {
     return out;
 }
 
-// " Tried: Switch: not trusted; own CA, RSA: cipher refused (0x...)" when more
-// than one attempt was made, so a failure says what each one did.
-std::string attempts_summary(const std::vector<std::string>& tried) {
-    if (tried.size() < 2) {
-        return "";
-    }
-    std::string out = ". Tried: ";
-    for (std::size_t i = 0; i < tried.size(); ++i) {
-        out += (i ? "; " : "") + tried[i];
-    }
-    return out;
-}
-
-// The TLS service didn't trust the server's certificate (see describe()).
+// The TLS service didn't trust the server's certificate (see describe()). Not
+// CURLE_SSL_CERTPROBLEM: curl's libnx backend uses it for the server asking for,
+// or refusing, a client certificate (0x2867B and the bad/revoked/expired
+// certificate alerts), which other roots or ciphers can't help with.
 bool untrusted(CURLcode code) {
-    return code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CERTPROBLEM ||
-           code == CURLE_SSL_CACERT_BADFILE;
+    return code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE;
 }
 
 void clear_folder(const char* path) {
@@ -151,7 +132,7 @@ bool write_file(const std::string& path, const std::string& text) {
 }
 
 std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca,
-                     bool has_certificate, bool public_roots_tried) {
+                     bool has_certificate) {
     switch (code) {
         case CURLE_COULDNT_RESOLVE_HOST:
             return "the server's name couldn't be found: check the address, and that the "
@@ -161,11 +142,11 @@ std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca,
                    "address right?";
         case CURLE_OPERATION_TIMEDOUT:
             return "the server took too long to answer";
-        case CURLE_PEER_FAILED_VERIFICATION:
         case CURLE_SSL_CERTPROBLEM:
+            return dreadovania::client_certificate_message(detail, has_certificate);
+        case CURLE_PEER_FAILED_VERIFICATION:
         case CURLE_SSL_CACERT_BADFILE:
-            return dreadovania::untrusted_certificate_message(detail, ca, switch_time_utc(),
-                                                              public_roots_tried);
+            return dreadovania::untrusted_certificate_message(detail, ca, switch_time_utc());
         case CURLE_SSL_CONNECT_ERROR:
             return std::string("the secure connection failed (") + detail +
                    (has_certificate
@@ -211,93 +192,48 @@ std::string Http::init(const std::function<void(const std::string&)>& on_step) {
         user_ca_count_ = user_certs.size();
         ca_dir_ = kUserCaDir;
     }
-    prepare_public_roots(user_certs, on_step);
+    remove_old_public_roots(on_step);
     plan_attempts();
     agent_ = "Dreadovania-NX/" + std::string(dreadovania::kVersion);
     ready_ = true;
     return "";
 }
 
-void Http::prepare_public_roots(const std::vector<std::string>& user_certs,
-                                const std::function<void(const std::string&)>& on_step) {
-    // Mozilla's roots in batches, each with the user's CA, rewritten only when the
-    // bundle or ca.pem changes, so the SD card isn't written ~120 files at every
-    // start (ADRs 0013 and 0014).
-    std::string bundle;
-    bool read = R_SUCCEEDED(romfsInit());
-    if (read) {
-        read = read_file(kBundledRoots, bundle);
-        romfsExit();
+void Http::remove_old_public_roots(const std::function<void(const std::string&)>& on_step) {
+    // Only our own folders, and only the .pem files the older versions wrote there.
+    struct stat st{};
+    if (stat(kOldPublicCaStamp, &st) == 0 && on_step) {
+        on_step("Removing old certificate files...");
     }
-    std::vector<std::vector<std::string>> batches =
-        read ? dreadovania::root_batches(bundle, kRootsPerBatch)
-             : std::vector<std::vector<std::string>>{};
-    if (batches.empty() || batches.size() > kMaxBatchFolders) {
-        return;  // no bundle: the Switch's roots and the user's CA only
-    }
-    dreadovania::Sha256 hash;
-    hash.update(bundle);
-    hash.update("\n--batch--\n" + std::to_string(kRootsPerBatch));
-    for (const std::string& cert : user_certs) {
-        hash.update("\n--user--\n");
-        hash.update(cert);
-    }
-    std::string stamp = hash.hex();
-    std::string written;
-    if (!read_file(kPublicCaStamp, written) || written != stamp) {
-        if (on_step) {
-            on_step("Preparing trusted certificates...");
-        }
-        std::remove(kPublicCaStamp);  // half-written folders: not used until finished
-        clear_folder(kPublicCaDir);   // 0.8.0's single folder, which was too big
-        rmdir(kPublicCaDir);
-        for (std::size_t i = 0; i < kMaxBatchFolders; ++i) {
-            clear_folder(batch_folder(i).c_str());
-            if (i >= batches.size()) {
-                rmdir(batch_folder(i).c_str());
-            }
-        }
-        for (std::size_t i = 0; i < batches.size(); ++i) {
-            if (on_step) {
-                on_step("Preparing trusted certificates (" + std::to_string(i + 1) + " of " +
-                        std::to_string(batches.size()) + ")...");
-            }
-            std::string folder = batch_folder(i);
-            mkdir(folder.c_str(), 0777);
-            for (std::size_t k = 0; k < batches[i].size(); ++k) {
-                if (!write_file(folder + "/mozilla-" + std::to_string(k) + ".pem", batches[i][k])) {
-                    return;
+    std::remove(kOldPublicCaStamp);
+    auto clear = [](const std::string& folder) {
+        if (DIR* dir = opendir(folder.c_str())) {
+            std::vector<std::string> pems;
+            while (dirent* entry = readdir(dir)) {
+                std::string name = entry->d_name;
+                if (name.size() > 4 && name.compare(name.size() - 4, 4, ".pem") == 0) {
+                    pems.push_back(folder + "/" + name);
                 }
             }
-            for (std::size_t k = 0; k < user_certs.size(); ++k) {
-                if (!write_file(folder + "/ca-" + std::to_string(k) + ".pem", user_certs[k])) {
-                    return;
-                }
+            closedir(dir);
+            for (const std::string& pem : pems) {
+                std::remove(pem.c_str());
             }
+            rmdir(folder.c_str());  // only if it's now empty
         }
-        if (!write_file(kPublicCaStamp, stamp)) {
-            return;
-        }
-    }
-    for (std::size_t i = 0; i < batches.size(); ++i) {
-        public_ca_dirs_.push_back(batch_folder(i));
-        public_root_count_ += batches[i].size();
+    };
+    clear(kOldPublicCaDir);
+    for (std::size_t i = 0; i < kOldBatchFolders; ++i) {
+        clear(std::string(kOldPublicCaDir) + "-" + std::to_string(i));
     }
 }
 
 void Http::plan_attempts() {
-    // After the first try (the Switch's roots and the user's CA), each folder in
-    // turn, plainly and then asking for RSA: a server whose ECDSA chain the
-    // Switch can't check may have an RSA one too, as Cloudflare does (ADR 0015).
-    bool rsa = hosversionAtLeast(17, 0, 0);  // libnx's SetCipher option
-    if (rsa) {
+    // After the first try (the Switch's roots and the user's CA), once more asking
+    // for RSA: a server whose ECDSA chain the Switch can't check may have an RSA one
+    // too, as Cloudflare does (ADR 0015).
+    if (hosversionAtLeast(17, 0, 0)) {  // libnx's SetCipher option
         attempts_.push_back({&ca_dir_, true});
-    }
-    for (const std::string& folder : public_ca_dirs_) {
-        attempts_.push_back({&folder, false});
-        if (rsa) {
-            attempts_.push_back({&folder, true});
-        }
     }
 }
 
@@ -311,22 +247,13 @@ std::string Http::attempt_label(const std::string& url) const {
     if (attempt == nullptr) {
         return "Switch";
     }
-    std::string where = "own CA";
-    for (std::size_t i = 0; i < public_ca_dirs_.size(); ++i) {
-        if (attempt->folder == &public_ca_dirs_[i]) {
-            where = "roots " + std::to_string(i + 1);
-        }
-    }
+    std::string where = attempt->folder->empty() ? "Switch" : "own CA";
     return attempt->rsa ? where + ", RSA" : where;
-}
-
-bool Http::with_public_roots(const std::string& url) const {
-    return attempt_of_.count(dreadovania::origin_of(url)) != 0;
 }
 
 bool Http::next_attempt(const std::string& url) {
     // The one that works is remembered for the server until the app restarts
-    // (ADRs 0014, 0015). Every attempt verifies the certificate fully.
+    // (ADR 0015). Every attempt verifies the certificate fully.
     std::string origin = dreadovania::origin_of(url);
     if (attempts_.empty() || origin.empty()) {
         return false;
@@ -388,8 +315,7 @@ void Http::setup(const std::string& url, const char* method, curl_slist* headers
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);  // never plain HTTP
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-    // No CA file: the Switch's trusted roots, plus the user's CA if there is one,
-    // plus Mozilla's roots for a server that needed them (ADR 0013).
+    // No CA file: the Switch's trusted roots, plus the user's CA if there is one.
     curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
     const Attempt* attempt = attempt_for(url);
     const std::string& folder = attempt != nullptr ? *attempt->folder : ca_dir_;
@@ -443,12 +369,10 @@ Response Http::request(std::string_view method, const std::string& url, const st
     curl_slist* list = headers(token, !body.empty());
     char detail[CURL_ERROR_SIZE] = {};
     CURLcode code = CURLE_OK;
-    bool retried = false;
-    std::vector<std::string> tried;  // each failed attempt, for the message
+    std::vector<std::pair<std::string, std::string>> tried;  // each failed attempt
     do {
         // A certificate is checked before anything is sent, so trying again is safe.
         if (code != CURLE_OK) {
-            retried = true;
             response.body.clear();
             detail[0] = '\0';
         }
@@ -463,7 +387,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
         }
         code = curl_easy_perform(handle_);
         if (code != CURLE_OK) {
-            tried.push_back(label + ": " + short_result(code, detail));
+            tried.emplace_back(label, short_result(code, detail));
         }
     } while (try_next(code, url));
     if (code == CURLE_OK) {
@@ -471,9 +395,8 @@ Response Http::request(std::string_view method, const std::string& url, const st
     } else if (sink.too_big) {
         response.error = "the server's answer was too large";
     } else {
-        response.error = describe(code, detail, user_ca_, !cert_path_.empty(),
-                                  retried || with_public_roots(url)) +
-                         attempts_summary(tried);
+        response.error = describe(code, detail, user_ca_, !cert_path_.empty()) +
+                         dreadovania::attempts_summary(tried);
     }
     curl_slist_free_all(list);
     return response;
@@ -528,13 +451,11 @@ Response Http::download(const std::string& url, const std::string& token,
     char detail[CURL_ERROR_SIZE] = {};
     Stream stream{&on_data, &on_progress, 0, 0, nullptr, false, {}};
     CURLcode code = CURLE_OK;
-    bool retried = false;
-    std::vector<std::string> tried;
+    std::vector<std::pair<std::string, std::string>> tried;
     do {
         // The certificate is checked before any data arrives, so on_data hasn't
-        // been called when trying again with Mozilla's roots (ADR 0013).
+        // been called when trying again with an RSA cipher (ADR 0015).
         if (code != CURLE_OK) {
-            retried = true;
             detail[0] = '\0';
         }
         std::string label = attempt_label(url);
@@ -547,14 +468,13 @@ Response Http::download(const std::string& url, const std::string& token,
         curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &stream);
         code = curl_easy_perform(handle_);
         if (code != CURLE_OK) {
-            tried.push_back(label + ": " + short_result(code, detail));
+            tried.emplace_back(label, short_result(code, detail));
         }
     } while (stream.received == 0 && try_next(code, url));
     curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     if (code != CURLE_OK && !stream.stopped) {
-        response.error = describe(code, detail, user_ca_, !cert_path_.empty(),
-                                  retried || with_public_roots(url)) +
-                         attempts_summary(tried);
+        response.error = describe(code, detail, user_ca_, !cert_path_.empty()) +
+                         dreadovania::attempts_summary(tried);
     }
     response.body = std::move(stream.error_body);
     curl_slist_free_all(list);

@@ -1,6 +1,6 @@
 # 0013. Mozilla's root store, imported one certificate at a time
 
-- Status: Proposed; decision 2 (one folder) superseded by [0014](0014-root-batches.md)
+- Status: Superseded by [0016](0016-switch-roots-only.md) (decision 2 earlier by [0014](0014-root-batches.md))
 - Date: 2026-11-12
 - Supersedes: [0006](0006-switch-tls-service.md), decision 1 ("public certificate
   authorities are checked against the Switch's own trusted roots"; the app

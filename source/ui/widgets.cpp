@@ -47,10 +47,13 @@ void header(Gfx& g, const std::string& right, bool connected, const std::string&
         // one control, "press L to change the server".
         int gw = glyph_width(g, button);
         int tw = std::min(g.measure(right, kSmall), 560);
-        int pill_w = 12 + gw + 12 + tw + (connected ? 26 : 0) + 18;
+        // The pill's ends are round (radius 22): the button sits far enough in
+        // to clear the curve, and the dot (or text) as far in from the left.
+        const int inset = 12, dot = connected ? 21 : 0, left = connected ? 16 : 18;
+        int pill_w = inset + gw + 12 + tw + dot + left;
         g.framed(end - pill_w, 14, pill_w, 44, 22, 1, color::line, color::panel);
-        glyph(g, end - 7 - gw, 36, button);
-        end -= 7 + gw + 12;
+        glyph(g, end - inset - gw, 36, button);
+        end -= inset + gw + 12;
     }
     int w = g.text(right, end, 25, kSmall, color::muted, false, Align::Right, 560);
     if (connected && w > 0) {

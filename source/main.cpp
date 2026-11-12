@@ -990,7 +990,9 @@ class App {
         } else if (servers_.servers.empty()) {
             return;
         } else if (down & HidNpadButton_A) {
-            use_server(v_.server_cursor);
+            if (!v_.servers[v_.server_cursor].in_use) {  // in use: B goes back
+                use_server(v_.server_cursor);
+            }
         } else if (down & HidNpadButton_X) {
             toggle_link(v_.server_cursor);
         } else if (down & HidNpadButton_R) {
