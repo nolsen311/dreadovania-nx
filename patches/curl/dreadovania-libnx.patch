@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Applied by scripts/build-curl.sh after devkitPro's switch-curl.patch (ADR 0015):
+# CURLOPT_SSL_CIPHER_LIST picks one cipher suite through libnx's SetCipher
+# option, and load_capath closes the CA folder when it returns early. It also
+# drops CURL_RUN_IFELSE's AC_REQUIRE([AC_RUN_IFELSE]): with autoconf 2.70+
+# (Debian bookworm's), that fails every cross build (curl removed it in later
+# releases).
+
+--- a/lib/vtls/libnx.c
++++ b/lib/vtls/libnx.c
+@@ -32,6 +32,7 @@
+ #ifdef USE_LIBNX
+ 
+ #include <switch.h>
++#include <stdlib.h>
+ 
+ #undef BIT
+ 
+@@ -150,8 +151,11 @@
+       failf(data, "Error reading ca path file %s",
+             tmp_path);
+ 
+-      if(verifypeer)
++      if(verifypeer) {
++        closedir(dir);
+         return CURLE_SSL_CACERT_BADFILE;
++      }
++      continue;
+     }
+ 
+     rc = sslContextImportServerPki(context, tmpbuf, tmpbuf_size,
+@@ -162,8 +166,10 @@
+       failf(data, "Error importing ca path file %s - libnx: 0x%X",
+             tmp_path, rc);
+ 
+-      if(verifypeer)
++      if(verifypeer) {
++        closedir(dir);
+         return CURLE_SSL_CACERT_BADFILE;
++      }
+     }
+   }
+ 
+@@ -422,6 +428,29 @@
+     rc = sslConnectionSetOption(&BACKEND->conn,
+                                 SslOptionType_GetServerCertChain, TRUE);
+ 
++  /* Dreadovania: CURLOPT_SSL_CIPHER_LIST names one cipher suite by its IANA
++   * number (e.g. "0xC02F"), and only that suite is offered ([17.0.0+]). */
++  if(R_SUCCEEDED(rc) && SSL_CONN_CONFIG(cipher_list)) {
++    char *end = NULL;
++    unsigned long suite = strtoul(SSL_CONN_CONFIG(cipher_list), &end, 0);
++    if(!end || *end || !suite || suite > 0xFFFF) {
++      failf(data, "Cipher list must be one IANA cipher suite number");
++      return CURLE_SSL_CIPHER;
++    }
++    if(!hosversionAtLeast(17, 0, 0)) {
++      failf(data, "Choosing a cipher suite needs system version 17.0.0+");
++      return CURLE_SSL_CIPHER;
++    }
++    rc = sslConnectionSetPrivateOption(&BACKEND->conn,
++                                       SslPrivateOptionType_SetCipher,
++                                       (u32)suite);
++    if(R_FAILED(rc)) {
++      failf(data, "Error choosing cipher suite %s - libnx: 0x%X",
++            SSL_CONN_CONFIG(cipher_list), rc);
++      return CURLE_SSL_CIPHER;
++    }
++  }
++
+   if(R_SUCCEEDED(rc)) {
+     u32 verifyopt = SslVerifyOption_DateCheck;
+     if(verifypeer) verifyopt |= SslVerifyOption_PeerCa;
+--- a/m4/curl-functions.m4
++++ b/m4/curl-functions.m4
+@@ -7289,7 +7289,6 @@
+ dnl changes contained within this macro.
+ 
+ AC_DEFUN([CURL_RUN_IFELSE], [
+-   AC_REQUIRE([AC_RUN_IFELSE])dnl
+ 
+    old=$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH=$CURL_LIBRARY_PATH:$old

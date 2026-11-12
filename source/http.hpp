@@ -52,9 +52,16 @@ class Http {
 
   private:
     void prepare_public_roots(const std::vector<std::string>& user_certs);
-    const std::string& ca_folder_for(const std::string& url) const;
+    // One way of trying a server whose certificate wasn't trusted (ADRs 0014, 0015).
+    struct Attempt {
+        const std::string* folder;  // CURLOPT_CAPATH
+        bool rsa;                   // offer only an RSA cipher suite
+    };
+    void plan_attempts();
+    const Attempt* attempt_for(const std::string& url) const;
     bool with_public_roots(const std::string& url) const;
-    bool next_public_batch(const std::string& url);
+    bool next_attempt(const std::string& url);
+    bool try_next(int code, const std::string& url);  // code: a CURLcode
     void setup(const std::string& url, const char* method, ::curl_slist* headers,
                char* detail);
     static ::curl_slist* headers(const std::string& token, bool json_body);
@@ -68,7 +75,8 @@ class Http {
     std::size_t user_ca_count_ = 0;
     std::vector<std::string> public_ca_dirs_;  // one per batch; empty without the bundle
     std::size_t public_root_count_ = 0;
-    std::map<std::string, std::size_t> public_batch_;  // server origin -> batch it needed
+    std::vector<Attempt> attempts_;                    // in order; folders point into the above
+    std::map<std::string, std::size_t> attempt_of_;   // server origin -> attempt it needed
     dreadovania::UserCa user_ca_ = dreadovania::UserCa::Missing;
 };
 

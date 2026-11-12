@@ -121,7 +121,11 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/src -w /src devkitpro/devkita6
 ```
 
 That writes `dreadovania.nro`: copy it to `/switch/` on the SD card and open it
-from the Homebrew Menu.
+from the Homebrew Menu. The first build in a fresh checkout also builds the
+app's own libcurl, with a small patch for the Switch's TLS service
+([ADR 0015](docs/adr/0015-rsa-cipher-and-own-curl.md)). That step needs
+autoconf, automake and libtool. As root in the container (leave out
+`-u "$(id -u):$(id -g)"` the first time), the script installs them itself.
 
 The code that doesn't need a Switch (under `core/`) is unit-tested on your
 computer with CMake and a C++20 compiler:

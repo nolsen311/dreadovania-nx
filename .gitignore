@@ -4,3 +4,4 @@ build-host/
 *.nacp
 *.elf
 build-preview/
+build-curl/
