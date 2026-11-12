@@ -18,6 +18,7 @@ supersedes the old one; don't rewrite history.
 | [0010](0010-several-servers-by-network.md) | Several servers, picked by the network the Switch is on | Proposed |
 | [0011](0011-signoff-stacked-pull-requests.md) | `/signoff` for stacked pull requests | Proposed |
 | [0012](0012-client-certificates.md) | Client certificates for secure remote access | Proposed |
-| [0013](0013-mozilla-roots.md) | Mozilla's root store, imported one certificate at a time | Proposed |
-| [0014](0014-root-batches.md) | Mozilla's roots in batches of 32 | Proposed |
+| [0013](0013-mozilla-roots.md) | Mozilla's root store, imported one certificate at a time | Superseded by 0016 |
+| [0014](0014-root-batches.md) | Mozilla's roots in batches of 32 | Superseded by 0016 |
 | [0015](0015-rsa-cipher-and-own-curl.md) | Ask for an RSA certificate when an ECDSA one can't be checked, with our own libcurl build | Proposed |
+| [0016](0016-switch-roots-only.md) | The Switch's own roots again: no bundled root store | Proposed |

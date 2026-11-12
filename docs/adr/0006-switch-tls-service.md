@@ -1,6 +1,6 @@
 # 0006. Certificates are checked by the Switch's TLS service
 
-- Status: Accepted; decision 1 (no bundled root store) superseded by [0013](0013-mozilla-roots.md)
+- Status: Accepted; decision 1 (no bundled root store) superseded by [0013](0013-mozilla-roots.md), restored by [0016](0016-switch-roots-only.md)
 - Date: 2026-11-10
 - Supersedes: the root-store parts of [0004](0004-phase4-plan.md) (decision 4) and
   [0005](0005-trusted-roots-and-json.md) (trusted roots from certifi)

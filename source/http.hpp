@@ -52,13 +52,9 @@ class Http {
                       const std::function<bool(const char*, std::size_t)>& on_data,
                       const std::function<void(std::uint64_t)>& on_progress);
 
-    // How many of Mozilla's roots are ready as a second step (ADRs 0013, 0014), or 0.
-    std::size_t public_root_count() const { return public_root_count_; }
-
   private:
-    void prepare_public_roots(const std::vector<std::string>& user_certs,
-                              const std::function<void(const std::string&)>& on_step);
-    // One way of trying a server whose certificate wasn't trusted (ADRs 0014, 0015).
+    void remove_old_public_roots(const std::function<void(const std::string&)>& on_step);
+    // One way of trying a server whose certificate wasn't trusted (ADR 0015).
     struct Attempt {
         const std::string* folder;  // CURLOPT_CAPATH
         bool rsa;                   // offer only an RSA cipher suite
@@ -66,7 +62,6 @@ class Http {
     void plan_attempts();
     const Attempt* attempt_for(const std::string& url) const;
     std::string attempt_label(const std::string& url) const;
-    bool with_public_roots(const std::string& url) const;
     bool next_attempt(const std::string& url);
     bool try_next(int code, const std::string& url);  // code: a CURLcode
     void setup(const std::string& url, const char* method, ::curl_slist* headers,
@@ -81,9 +76,7 @@ class Http {
     std::string cert_password_;  // secret: never shown or logged
     std::size_t user_ca_count_ = 0;
     std::function<void()> wait_hook_;
-    std::vector<std::string> public_ca_dirs_;  // one per batch; empty without the bundle
-    std::size_t public_root_count_ = 0;
-    std::vector<Attempt> attempts_;                    // in order; folders point into the above
+    std::vector<Attempt> attempts_;                    // in order, after the first try
     std::map<std::string, std::size_t> attempt_of_;   // server origin -> attempt it needed
     dreadovania::UserCa user_ca_ = dreadovania::UserCa::Missing;
 };

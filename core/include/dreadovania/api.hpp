@@ -149,21 +149,10 @@ UserCa classify_user_ca(std::string_view file_contents, bool exists);
 // per call, so a file with several must be split (ADR 0006).
 std::vector<std::string> split_pem_certificates(std::string_view text);
 
-// Mozilla's roots (certifi's cacert.pem, with its "# Label:" comments) in batches
-// of at most `batch_size`, the widely used roots first (kPriorityRoots). The
-// Switch's TLS service refuses to import more than about 70 certificates into one
-// connection, so they're tried a batch at a time (ADR 0014).
-std::vector<std::vector<std::string>> root_batches(std::string_view bundle,
-                                                   std::size_t batch_size);
-// The labels root_batches puts first, in order.
-std::vector<std::string_view> priority_root_labels();
-
 // Why a certificate wasn't trusted, with what to check. `tls_detail` is the TLS
 // library's own reason (may be empty); `switch_time_utc` is the console's clock.
-// `public_roots_tried`: Mozilla's roots were tried as well (ADR 0013).
 std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
-                                          std::string_view switch_time_utc,
-                                          bool public_roots_tried = false);
+                                          std::string_view switch_time_utc);
 
 // The server asked for a client certificate during the handshake and didn't get
 // one it accepts. The Switch's TLS service reports this as a certificate error
@@ -178,7 +167,7 @@ std::string client_certificate_message(std::string_view tls_detail, bool has_cer
 std::string attempts_summary(const std::vector<std::pair<std::string, std::string>>& tried);
 
 // "https://host[:port]" of a URL, lower-cased, without path or query; "" if it
-// isn't an https URL. Used to remember which servers need Mozilla's roots.
+// isn't an https URL. Used to remember which servers need an RSA certificate.
 std::string origin_of(std::string_view url);
 
 // The "detail" (or "title") of an RFC 9457 problem response, if there is one.

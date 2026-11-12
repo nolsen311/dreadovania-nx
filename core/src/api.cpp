@@ -308,13 +308,12 @@ UserCa classify_user_ca(std::string_view file_contents, bool exists) {
 }
 
 std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
-                                          std::string_view switch_time_utc,
-                                          bool public_roots_tried) {
+                                          std::string_view switch_time_utc) {
     std::string out = "the server's certificate isn't trusted";
     if (!tls_detail.empty()) {
         out += " (" + std::string(tls_detail) + ")";
     }
-    out += public_roots_tried ? ", by the Switch or by Mozilla's public roots. " : ". ";
+    out += ". ";
     switch (ca) {
         case UserCa::Loaded:
             out += "Your CA from /config/dreadovania/ca.pem was used. ";
@@ -567,108 +566,6 @@ std::string origin_of(std::string_view url) {
         out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return out;
-}
-
-namespace {
-
-// The roots most public servers' certificates chain to, tried first (ADR 0014):
-// Let's Encrypt, Google Trust Services, SSL.com (Cloudflare's three), then
-// DigiCert, GlobalSign, Sectigo, Amazon, Microsoft and GoDaddy.
-constexpr std::string_view kPriorityRoots[] = {
-    "ISRG Root X1",
-    "ISRG Root X2",
-    "GTS Root R1",
-    "GTS Root R3",
-    "GTS Root R4",
-    "SSL.com TLS RSA Root CA 2022",
-    "SSL.com TLS ECC Root CA 2022",
-    "SSL.com Root Certification Authority RSA",
-    "SSL.com Root Certification Authority ECC",
-    "DigiCert Global Root G2",
-    "DigiCert Global Root G3",
-    "DigiCert TLS ECC P384 Root G5",
-    "DigiCert TLS RSA4096 Root G5",
-    "GlobalSign Root CA - R3",
-    "GlobalSign Root CA - R6",
-    "GlobalSign ECC Root CA - R4",
-    "GlobalSign ECC Root CA - R5",
-    "GlobalSign Root R46",
-    "GlobalSign Root E46",
-    "USERTrust RSA Certification Authority",
-    "USERTrust ECC Certification Authority",
-    "Sectigo Public Server Authentication Root R46",
-    "Sectigo Public Server Authentication Root E46",
-    "Amazon Root CA 1",
-    "Amazon Root CA 2",
-    "Amazon Root CA 3",
-    "Amazon Root CA 4",
-    "Microsoft RSA Root Certificate Authority 2017",
-    "Microsoft ECC Root Certificate Authority 2017",
-    "Starfield Root Certificate Authority - G2",
-    "Go Daddy Root Certificate Authority - G2",
-};
-
-}  // namespace
-
-std::vector<std::string_view> priority_root_labels() {
-    return {std::begin(kPriorityRoots), std::end(kPriorityRoots)};
-}
-
-std::vector<std::vector<std::string>> root_batches(std::string_view bundle,
-                                                   std::size_t batch_size) {
-    constexpr std::string_view kBegin = "-----BEGIN CERTIFICATE-----";
-    constexpr std::string_view kEnd = "-----END CERTIFICATE-----";
-    constexpr std::string_view kLabel = "# Label: \"";
-    constexpr std::size_t kUnranked = sizeof(kPriorityRoots) / sizeof(kPriorityRoots[0]);
-    struct Root {
-        std::size_t rank;
-        std::size_t order;
-        std::string pem;
-    };
-    std::vector<Root> roots;
-    std::size_t pos = 0;
-    while (true) {
-        std::size_t begin = bundle.find(kBegin, pos);
-        if (begin == std::string_view::npos) {
-            break;
-        }
-        std::size_t end = bundle.find(kEnd, begin);
-        if (end == std::string_view::npos) {
-            break;  // truncated: ignored, as split_pem_certificates does
-        }
-        end += kEnd.size();
-        // This certificate's label: the last one between the previous and this.
-        std::size_t rank = kUnranked;
-        std::size_t label = bundle.rfind(kLabel, begin);
-        if (label != std::string_view::npos && label >= pos) {
-            std::size_t start = label + kLabel.size();
-            std::size_t close = bundle.find('"', start);
-            if (close != std::string_view::npos && close < begin) {
-                std::string_view name = bundle.substr(start, close - start);
-                for (std::size_t i = 0; i < kUnranked; ++i) {
-                    if (kPriorityRoots[i] == name) {
-                        rank = i;
-                        break;
-                    }
-                }
-            }
-        }
-        roots.push_back({rank, roots.size(), std::string(bundle.substr(begin, end - begin))});
-        pos = end;
-    }
-    std::stable_sort(roots.begin(), roots.end(),
-                     [](const Root& a, const Root& b) { return a.rank < b.rank; });
-    std::vector<std::vector<std::string>> batches;
-    if (batch_size == 0) {
-        return batches;
-    }
-    for (Root& root : roots) {
-        if (batches.empty() || batches.back().size() == batch_size) {
-            batches.emplace_back();
-        }
-        batches.back().push_back(std::move(root.pem));
-    }
-    return batches;
 }
 
 }  // namespace dreadovania
