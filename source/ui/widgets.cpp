@@ -203,7 +203,7 @@ void dialog(Gfx& g, const std::string& title, const std::vector<std::string>& li
 
 void toast(Gfx& g, const std::string& text, Color c) {
     const int max_w = 1100;
-    std::vector<std::string> lines = g.wrap(text, kSmall + 1, max_w - 70, 3);
+    std::vector<std::string> lines = g.wrap(text, kSmall + 1, max_w - 70, 6);
     int w = 0;
     for (const std::string& line : lines) {
         int lw = g.measure(line, kSmall + 1);
@@ -221,6 +221,34 @@ void toast(Gfx& g, const std::string& text, Color c) {
         g.text(line, x + 46, ty, kSmall + 1, color::fg);
         ty += lh;
     }
+}
+
+void spinner(Gfx& g, int cx, int cy, int radius, unsigned frame, Color c) {
+    constexpr int kDots = 8;
+    // Unit circle at 45-degree steps, scaled by 1000 (no floating point needed).
+    constexpr int kX[kDots] = {0, 707, 1000, 707, 0, -707, -1000, -707};
+    constexpr int kY[kDots] = {-1000, -707, 0, 707, 1000, 707, 0, -707};
+    const int dot = radius / 4 > 2 ? radius / 4 : 2;
+    const int lead = static_cast<int>(frame % kDots);
+    for (int i = 0; i < kDots; ++i) {
+        int age = (lead - i + kDots) % kDots;  // 0 = the brightest
+        Color shade = c;
+        shade.a = static_cast<std::uint8_t>(255 - age * 28);
+        g.circle(cx + kX[i] * (radius - dot) / 1000, cy + kY[i] * (radius - dot) / 1000,
+                 age == 0 ? dot + 1 : dot, shade);
+    }
+}
+
+void busy_pill(Gfx& g, const std::string& text, unsigned frame) {
+    const int size = kSmall + 1;
+    std::string line = g.wrap(text, size, 1000, 1).front();
+    const int w = g.measure(line, size) + 84;
+    const int h = g.line_height(size) + 28;
+    const int x = (Gfx::kWidth - w) / 2;
+    const int y = Gfx::kHeight - kFooter - 20 - h;
+    g.framed(x, y, w, h, h / 2, 1, color::wait, color::raised);
+    spinner(g, x + 34, y + h / 2, 14, frame, color::wait);
+    g.text(line, x + 60, y + 14, size, color::fg);
 }
 
 }  // namespace ui

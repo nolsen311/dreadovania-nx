@@ -9,7 +9,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL REQUIRED IMPORTED_TARGET sdl2 SDL2_ttf SDL2_gfx SDL2_image)
 add_executable(preview preview.cpp ../../source/ui/gfx.cpp ../../source/ui/widgets.cpp
-               ../../source/ui/screens.cpp ../../core/src/api.cpp ../../core/src/json.cpp)
+               ../../source/ui/screens.cpp ../../core/src/api.cpp ../../core/src/json.cpp
+               ../../core/src/certs.cpp)
 target_include_directories(preview PRIVATE ../../core/include ../../source)
 target_compile_definitions(preview PRIVATE DREADOVANIA_VERSION="preview")
 target_compile_options(preview PRIVATE -Wall -Wextra -Werror)

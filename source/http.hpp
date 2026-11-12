@@ -28,7 +28,12 @@ struct Response {
 class Http {
   public:
     // Prepares networking and the trusted roots. Returns an error, or "".
-    std::string init();
+    // `on_step` hears what's being prepared, to show while the app starts.
+    std::string init(const std::function<void(const std::string&)>& on_step = {});
+
+    // Called now and then while a request waits (curl's progress callback), so the
+    // screen can show that something is happening. Not during a TLS handshake.
+    void set_wait_hook(std::function<void()> hook) { wait_hook_ = std::move(hook); }
     void shutdown();
     dreadovania::UserCa user_ca() const { return user_ca_; }
 
@@ -51,7 +56,8 @@ class Http {
     std::size_t public_root_count() const { return public_root_count_; }
 
   private:
-    void prepare_public_roots(const std::vector<std::string>& user_certs);
+    void prepare_public_roots(const std::vector<std::string>& user_certs,
+                              const std::function<void(const std::string&)>& on_step);
     // One way of trying a server whose certificate wasn't trusted (ADRs 0014, 0015).
     struct Attempt {
         const std::string* folder;  // CURLOPT_CAPATH
@@ -59,6 +65,7 @@ class Http {
     };
     void plan_attempts();
     const Attempt* attempt_for(const std::string& url) const;
+    std::string attempt_label(const std::string& url) const;
     bool with_public_roots(const std::string& url) const;
     bool next_attempt(const std::string& url);
     bool try_next(int code, const std::string& url);  // code: a CURLcode
@@ -73,6 +80,7 @@ class Http {
     std::string cert_path_;
     std::string cert_password_;  // secret: never shown or logged
     std::size_t user_ca_count_ = 0;
+    std::function<void()> wait_hook_;
     std::vector<std::string> public_ca_dirs_;  // one per batch; empty without the bundle
     std::size_t public_root_count_ = 0;
     std::vector<Attempt> attempts_;                    // in order; folders point into the above

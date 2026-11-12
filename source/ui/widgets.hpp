@@ -58,5 +58,9 @@ void toggle(Gfx& g, int x, int y, bool on);
 void dialog(Gfx& g, const std::string& title, const std::vector<std::string>& lines,
             const std::vector<Hint>& actions);
 void toast(Gfx& g, const std::string& text, Color c);
+// A ring of dots, the brightest at a position that moves with `frame`.
+void spinner(Gfx& g, int cx, int cy, int radius, unsigned frame, Color c);
+// Where a toast goes: a spinner and what's running.
+void busy_pill(Gfx& g, const std::string& text, unsigned frame);
 
 }  // namespace ui

@@ -300,10 +300,12 @@ static void draw_working(Gfx& g, const View& v) {
         if (done) {
             g.circle(x + 22, cy, 22, color::ok);
             ui::check_mark(g, x + 22, cy, color::bg);
+        } else if (now) {
+            ui::spinner(g, x + 22, cy, 22, v.busy_frame, color::accent);  // in progress
         } else {
-            g.ring(x + 22, cy, 22, 3, now ? color::accent : color::line, color::bg);
+            g.ring(x + 22, cy, 22, 3, color::line, color::bg);
             g.text(std::to_string(i + 1), x + 22, g.top_for_center(cy, ui::kBody, true), ui::kBody,
-                   now ? color::accent : color::muted, true, ui::Align::Center);
+                   color::muted, true, ui::Align::Center);
         }
         g.text(v.work.steps[i], x + 64, g.top_for_center(cy, 24), 24,
                done || now ? color::fg : color::muted);
@@ -325,6 +327,17 @@ static void draw_working(Gfx& g, const View& v) {
     } else {
         ui::footer(g, "Keep the app open", {{"B", "Stop waiting (the server carries on)"}});
     }
+}
+
+// While the app starts: networking and the trusted certificates (ADRs 0013-0015).
+static void draw_starting(Gfx& g, const View& v) {
+    const int cx = ui::Gfx::kWidth / 2;
+    const int cy = ui::kHeader + (ui::Gfx::kHeight - ui::kHeader - ui::kFooter) / 2;
+    ui::logo(g, cx - 48, cy - 150, 96);
+    ui::spinner(g, cx, cy + 10, 26, v.busy_frame, color::accent);
+    g.text(v.busy.empty() ? "Starting..." : v.busy, cx, cy + 60, ui::kBody, color::fg, false,
+           ui::Align::Center, ui::Gfx::kWidth - 200);
+    ui::footer(g, "Getting ready", {});
 }
 
 static void draw_pair(Gfx& g, const View& v) {
@@ -419,6 +432,9 @@ void draw(Gfx& g, const View& v) {
     bool servers_button = v.screen == Screen::Library && v.dialog == Dialog::None;
     ui::header(g, right, v.connected, servers_button ? "L" : "");
     switch (v.screen) {
+        case Screen::Starting:
+            draw_starting(g, v);
+            break;
         case Screen::Pair:
             draw_pair(g, v);
             break;
@@ -452,6 +468,8 @@ void draw(Gfx& g, const View& v) {
                     "This Switch will stop reaching that server's seeds until you pair it "
                     "again with a new code. Installed seeds stay on the SD card."},
                    {{"B", "Keep it"}, {"A", "Unpair"}});
+    } else if (!v.busy.empty() && v.screen != Screen::Starting) {
+        ui::busy_pill(g, v.busy, v.busy_frame);  // what's running, rather than the last toast
     } else if (v.show_toast && !v.toast.empty()) {
         ui::toast(g, v.toast, v.toast_bad ? color::bad : color::ok);
     }
