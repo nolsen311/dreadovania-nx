@@ -49,6 +49,11 @@ before the connection exists.
    - **A leak:** `load_capath` now closes the CA folder when it returns early.
      It leaked a folder handle per failed import, which mattered with ADR 0014's
      retries.
+   - **A build fix:** in `m4/curl-functions.m4`, `CURL_RUN_IFELSE`'s
+     `AC_REQUIRE([AC_RUN_IFELSE])` is removed. With autoconf 2.70 and later (the
+     container's apt installs 2.71), it expands to a test with no
+     cross-compiling branch, so every cross build fails ("cannot run test
+     program while cross compiling"). Later curl releases removed it too.
 3. **An RSA step for each CA folder:** after the first try, the app tries each
    CA folder twice:
    - first plainly, as in ADR 0014;

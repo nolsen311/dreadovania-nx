@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Applied by scripts/build-curl.sh after devkitPro's switch-curl.patch (ADR 0015):
 # CURLOPT_SSL_CIPHER_LIST picks one cipher suite through libnx's SetCipher
-# option, and load_capath closes the CA folder when it returns early.
+# option, and load_capath closes the CA folder when it returns early. It also
+# drops CURL_RUN_IFELSE's AC_REQUIRE([AC_RUN_IFELSE]): with autoconf 2.70+
+# (Debian bookworm's), that fails every cross build (curl removed it in later
+# releases).
 
 --- a/lib/vtls/libnx.c
 +++ b/lib/vtls/libnx.c
@@ -68,3 +71,13 @@
    if(R_SUCCEEDED(rc)) {
      u32 verifyopt = SslVerifyOption_DateCheck;
      if(verifypeer) verifyopt |= SslVerifyOption_PeerCa;
+--- a/m4/curl-functions.m4
++++ b/m4/curl-functions.m4
+@@ -7289,7 +7289,6 @@
+ dnl changes contained within this macro.
+ 
+ AC_DEFUN([CURL_RUN_IFELSE], [
+-   AC_REQUIRE([AC_RUN_IFELSE])dnl
+ 
+    old=$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH=$CURL_LIBRARY_PATH:$old
