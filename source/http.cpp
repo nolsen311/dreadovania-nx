@@ -89,8 +89,10 @@ std::string short_result(CURLcode code, const char* detail) {
     std::string out;
     switch (code) {
         case CURLE_PEER_FAILED_VERIFICATION:
-        case CURLE_SSL_CERTPROBLEM:
             out = "not trusted";
+            break;
+        case CURLE_SSL_CERTPROBLEM:
+            out = "client certificate";
             break;
         case CURLE_SSL_CACERT_BADFILE:
             out = "roots not loaded";
@@ -114,23 +116,12 @@ std::string short_result(CURLcode code, const char* detail) {
     return out;
 }
 
-// " Tried: Switch: not trusted; own CA, RSA: cipher refused (0x...)" when more
-// than one attempt was made, so a failure says what each one did.
-std::string attempts_summary(const std::vector<std::string>& tried) {
-    if (tried.size() < 2) {
-        return "";
-    }
-    std::string out = ". Tried: ";
-    for (std::size_t i = 0; i < tried.size(); ++i) {
-        out += (i ? "; " : "") + tried[i];
-    }
-    return out;
-}
-
-// The TLS service didn't trust the server's certificate (see describe()).
+// The TLS service didn't trust the server's certificate (see describe()). Not
+// CURLE_SSL_CERTPROBLEM: curl's libnx backend uses it for the server asking for,
+// or refusing, a client certificate (0x2867B and the bad/revoked/expired
+// certificate alerts), which other roots or ciphers can't help with.
 bool untrusted(CURLcode code) {
-    return code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CERTPROBLEM ||
-           code == CURLE_SSL_CACERT_BADFILE;
+    return code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE;
 }
 
 void clear_folder(const char* path) {
@@ -161,8 +152,9 @@ std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca,
                    "address right?";
         case CURLE_OPERATION_TIMEDOUT:
             return "the server took too long to answer";
-        case CURLE_PEER_FAILED_VERIFICATION:
         case CURLE_SSL_CERTPROBLEM:
+            return dreadovania::client_certificate_message(detail, has_certificate);
+        case CURLE_PEER_FAILED_VERIFICATION:
         case CURLE_SSL_CACERT_BADFILE:
             return dreadovania::untrusted_certificate_message(detail, ca, switch_time_utc(),
                                                               public_roots_tried);
@@ -444,7 +436,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
     char detail[CURL_ERROR_SIZE] = {};
     CURLcode code = CURLE_OK;
     bool retried = false;
-    std::vector<std::string> tried;  // each failed attempt, for the message
+    std::vector<std::pair<std::string, std::string>> tried;  // each failed attempt
     do {
         // A certificate is checked before anything is sent, so trying again is safe.
         if (code != CURLE_OK) {
@@ -463,7 +455,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
         }
         code = curl_easy_perform(handle_);
         if (code != CURLE_OK) {
-            tried.push_back(label + ": " + short_result(code, detail));
+            tried.emplace_back(label, short_result(code, detail));
         }
     } while (try_next(code, url));
     if (code == CURLE_OK) {
@@ -473,7 +465,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
     } else {
         response.error = describe(code, detail, user_ca_, !cert_path_.empty(),
                                   retried || with_public_roots(url)) +
-                         attempts_summary(tried);
+                         dreadovania::attempts_summary(tried);
     }
     curl_slist_free_all(list);
     return response;
@@ -529,7 +521,7 @@ Response Http::download(const std::string& url, const std::string& token,
     Stream stream{&on_data, &on_progress, 0, 0, nullptr, false, {}};
     CURLcode code = CURLE_OK;
     bool retried = false;
-    std::vector<std::string> tried;
+    std::vector<std::pair<std::string, std::string>> tried;
     do {
         // The certificate is checked before any data arrives, so on_data hasn't
         // been called when trying again with Mozilla's roots (ADR 0013).
@@ -547,14 +539,14 @@ Response Http::download(const std::string& url, const std::string& token,
         curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &stream);
         code = curl_easy_perform(handle_);
         if (code != CURLE_OK) {
-            tried.push_back(label + ": " + short_result(code, detail));
+            tried.emplace_back(label, short_result(code, detail));
         }
     } while (stream.received == 0 && try_next(code, url));
     curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     if (code != CURLE_OK && !stream.stopped) {
         response.error = describe(code, detail, user_ca_, !cert_path_.empty(),
                                   retried || with_public_roots(url)) +
-                         attempts_summary(tried);
+                         dreadovania::attempts_summary(tried);
     }
     response.body = std::move(stream.error_body);
     curl_slist_free_all(list);

@@ -213,6 +213,27 @@ TEST(untrusted_after_mozilla_roots_says_so) {
           std::string::npos);
 }
 
+TEST(client_certificate_messages_say_what_to_do) {
+    std::string none = client_certificate_message("verify 0x2867B, RSA cert", false);
+    CHECK(none.find("asked for a client certificate") != std::string::npos);
+    CHECK(none.find("(verify 0x2867B, RSA cert)") != std::string::npos);
+    CHECK(none.find("mTLS") != std::string::npos);
+    CHECK(none.find("isn't trusted") == std::string::npos);
+    std::string refused = client_certificate_message("", true);
+    CHECK(refused.find("didn't accept this Switch's client certificate") != std::string::npos);
+    CHECK(refused.find("Pair this Switch again") != std::string::npos);
+    CHECK(refused.find("()") == std::string::npos);
+}
+
+TEST(attempts_summary_lists_each_or_says_once) {
+    CHECK(attempts_summary({}).empty());
+    CHECK(attempts_summary({{"Switch", "not trusted"}}).empty());
+    CHECK(attempts_summary({{"Switch", "not trusted (a)"}, {"own CA, RSA", "cipher refused"}}) ==
+          ". Tried: Switch: not trusted (a); own CA, RSA: cipher refused");
+    CHECK(attempts_summary({{"Switch", "x"}, {"own CA, RSA", "x"}, {"roots 1", "x"}}) ==
+          ". Tried: Switch; own CA, RSA; roots 1. All: x");
+}
+
 namespace {
 
 std::string labelled(const std::string& label, const std::string& body) {

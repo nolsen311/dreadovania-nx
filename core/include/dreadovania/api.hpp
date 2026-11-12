@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace dreadovania {
@@ -163,6 +164,18 @@ std::vector<std::string_view> priority_root_labels();
 std::string untrusted_certificate_message(std::string_view tls_detail, UserCa ca,
                                           std::string_view switch_time_utc,
                                           bool public_roots_tried = false);
+
+// The server asked for a client certificate during the handshake and didn't get
+// one it accepts. The Switch's TLS service reports this as a certificate error
+// (0x2867B, 2123-0323, with none to give), so it's told apart from "isn't trusted"
+// here. `has_certificate`: this Switch presented one for this server.
+std::string client_certificate_message(std::string_view tls_detail, bool has_certificate);
+
+// The list of attempts at the end of an error: " Tried: a: x; b: y". When every
+// attempt failed the same way, the reason is given once:
+// " Tried: a; b; c. All: x". Empty for fewer than two attempts. Each entry is a
+// label and its result.
+std::string attempts_summary(const std::vector<std::pair<std::string, std::string>>& tried);
 
 // "https://host[:port]" of a URL, lower-cased, without path or query; "" if it
 // isn't an https URL. Used to remember which servers need Mozilla's roots.
