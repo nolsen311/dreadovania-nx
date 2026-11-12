@@ -4,16 +4,21 @@
 // (ADR 0009, docs/design).
 #include <switch.h>
 
-#include <cstdio>
-#include <fstream>
+#include <sys/stat.h>
+
 #include <algorithm>
+#include <cstdio>
+#include <ctime>
+#include <fstream>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "dreadovania/api.hpp"
+#include "dreadovania/certs.hpp"
 #include "dreadovania/servers.hpp"
 #include "dreadovania/version.hpp"
 #include "http.hpp"
@@ -59,6 +64,70 @@ bool save_servers(const ServerList& list) {
     }
     std::remove(kServersFile);
     return std::rename(tmp.c_str(), kServersFile) == 0;
+}
+
+// ---- client certificates (server ADR 0023) ------------------------------------
+
+std::string on_sd(const std::string& path) { return "sdmc:" + path; }
+
+// Write a server's .p12 next to the others, replacing the old one only once the new
+// one is fully written.
+bool save_certificate(const std::string& device_id, const std::string& p12) {
+    mkdir("sdmc:/config", 0777);
+    mkdir("sdmc:/config/dreadovania", 0777);
+    mkdir("sdmc:/config/dreadovania/certificates", 0777);
+    const std::string path = on_sd(dreadovania::certificate_file(device_id));
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(p12.data(), static_cast<std::streamsize>(p12.size()));
+        if (!out) {
+            return false;
+        }
+    }
+    std::remove(path.c_str());
+    return std::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+void remove_certificate(const std::string& device_id) {
+    if (!device_id.empty()) {
+        std::remove(on_sd(dreadovania::certificate_file(device_id)).c_str());
+    }
+}
+
+// The certificate to present to a server: one from the owner's own CA, if they put
+// <host>.p12 and <host>.password on the SD card; otherwise the server's own.
+std::pair<std::string, std::string> certificate_for(const PairedServer& server) {
+    if (auto own = dreadovania::own_certificate_files(server.server)) {
+        if (auto password = read_file(on_sd(own->password).c_str())) {
+            while (!password->empty() && (password->back() == '\n' || password->back() == '\r')) {
+                password->pop_back();
+            }
+            std::ifstream exists(on_sd(own->p12), std::ios::binary);
+            if (exists) {
+                return {on_sd(own->p12), *password};
+            }
+        }
+    }
+    if (!server.cert_password.empty()) {
+        std::string path = on_sd(dreadovania::certificate_file(server.device_id));
+        std::ifstream exists(path, std::ios::binary);
+        if (exists) {
+            return {path, server.cert_password};
+        }
+    }
+    return {"", ""};
+}
+
+std::string utc_now() {
+    std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    if (gmtime_r(&now, &utc) == nullptr) {
+        return "";
+    }
+    char text[32];
+    std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S", &utc);
+    return text;
 }
 
 // The paired servers. On the first start after updating from a single-server
@@ -220,6 +289,7 @@ class App {
     std::string net_error_;
     ServerList servers_;                  // every paired server (ADR 0010)
     std::optional<PairedServer> config_;  // the one in use
+    std::set<std::string> renewal_checked_;  // servers whose certificate was checked
     std::string network_;                 // the network the console is on, or ""
     std::optional<std::string> picked_on_;  // the network at the last automatic choice
     bool quitting_ = false;
@@ -607,16 +677,34 @@ class App {
         v_.typed_code = *code;
         say("Pairing...", false);
         render();
+        // No certificate for pairing: it may be through the server's front door, and
+        // another server's certificate is no use here.
+        http_.use_client_certificate("", "");
         app::Response r = http_.request("POST", *server.origin + "/api/v1/devices/pair",
                                         dreadovania::pair_request_body(*code, console_nickname()));
         auto paired = r.status == 201 ? dreadovania::parse_paired(r.body) : std::nullopt;
         if (!paired) {
+            apply_certificate();
             say("Not paired: " + explain(r, "the server refused the code"), true);
             return;
         }
+        PairedServer entry;
+        // Pairing may have been through the front door: the rest is at the main address.
+        auto main_url = dreadovania::normalize_server_url(paired->server_url);
+        entry.server = main_url.origin ? *main_url.origin : *server.origin;
+        entry.device_id = paired->device_id;
+        entry.name = paired->name;
+        entry.token = paired->token;
+        if (paired->certificate) {
+            if (save_certificate(paired->device_id, paired->certificate->p12)) {
+                entry.cert_password = paired->certificate->password;
+                entry.cert_sha256 = paired->certificate->sha256;
+                entry.cert_not_after = paired->certificate->not_after;
+                entry.cert_renew_after = paired->certificate->renew_after;
+            }
+        }
         ServerList updated = servers_;
-        std::size_t index = dreadovania::remember_server(
-            updated, {*server.origin, paired->device_id, paired->name, paired->token, {}, 0});
+        std::size_t index = dreadovania::remember_server(updated, std::move(entry));
         // Pairing here links this network to the new server, unless it's already
         // linked to another one (ADR 0010 decision 4).
         network_ = app::current_network();
@@ -630,6 +718,7 @@ class App {
         }
         servers_ = std::move(updated);
         config_ = servers_.servers[index];
+        apply_certificate();
         v_.typed_code.clear();
         v_.pairing_another = false;
         v_.server_note.clear();
@@ -658,6 +747,9 @@ class App {
             return;
         }
         auto seeds = r.status == 200 ? dreadovania::parse_seed_list(r.body) : std::nullopt;
+        if (seeds) {
+            renew_certificate_if_due();
+        }
         if (!seeds) {
             say("Couldn't load seeds: " + explain(r, "unexpected answer"), true);
             return;
@@ -743,6 +835,58 @@ class App {
         }
     }
 
+    // ---- client certificates (server ADR 0023) -------------------------------------------
+
+    // Present the certificate for the server in use, or none.
+    void apply_certificate() {
+        if (!config_) {
+            http_.use_client_certificate("", "");
+            return;
+        }
+        auto [path, password] = certificate_for(*config_);
+        http_.use_client_certificate(path, password);
+    }
+
+    // Once per server each session: if the server says it's time (a third of the
+    // certificate's life left, or it now gets them from another CA), fetch the
+    // replacement. The old one keeps working until the server sees the new one.
+    void renew_certificate_if_due() {
+        if (!config_ || renewal_checked_.count(config_->server) != 0) {
+            return;
+        }
+        renewal_checked_.insert(config_->server);
+        app::Response me = http_.request("GET", url("/api/v1/devices/me"), "", config_->token);
+        if (me.status != 200) {
+            return;
+        }
+        auto status = dreadovania::parse_certificate_status(me.body);
+        if (status && status->issuer == "external") {
+            return;  // from the owner's own CA: renewed there, not by the server
+        }
+        bool first = !status && config_->cert_password.empty() &&
+                     me.body.find("\"certificate\"") != std::string::npos;  // a newer server
+        if (!first && !(status && dreadovania::renewal_due(status->renew_after, utc_now()))) {
+            return;
+        }
+        app::Response r =
+            http_.request("POST", url("/api/v1/devices/me/certificate"), "", config_->token);
+        auto cert = r.status == 200 ? dreadovania::parse_client_certificate(r.body) : std::nullopt;
+        if (!cert || !save_certificate(config_->device_id, cert->p12)) {
+            return;  // try again next time: the current certificate still works
+        }
+        for (PairedServer& s : servers_.servers) {
+            if (s.server == config_->server) {
+                s.cert_password = cert->password;
+                s.cert_sha256 = cert->sha256;
+                s.cert_not_after = cert->not_after;
+                s.cert_renew_after = cert->renew_after;
+                config_ = s;
+            }
+        }
+        save_servers(servers_);
+        apply_certificate();  // the next request uses the new one, which retires the old
+    }
+
     // ---- the Servers screen (ADR 0010) -------------------------------------------------
 
     void open_servers() {
@@ -798,6 +942,7 @@ class App {
         dreadovania::mark_used(servers_, index);
         save_servers(servers_);
         config_ = servers_.servers[index];
+        apply_certificate();
         picked_on_ = network_;
         bool here = dreadovania::linked_server(servers_, network_) == index;
         v_.server_note = here || servers_.servers.size() < 2 || network_.empty()
@@ -840,9 +985,13 @@ class App {
     void unpair_other(const std::string& origin) {
         for (const PairedServer& s : servers_.servers) {
             if (s.server == origin) {
+                auto [path, password] = certificate_for(s);  // its own, just for this
+                http_.use_client_certificate(path, password);
                 http_.request("DELETE", s.server + "/api/v1/devices/me", "", s.token);
+                remove_certificate(s.device_id);
             }
         }
+        apply_certificate();
         dreadovania::forget_server(servers_, origin);
         save_servers(servers_);
         sync_servers_view();
@@ -854,9 +1003,11 @@ class App {
     bool drop_current() {
         v_.last_server = config_->server;
         save_last_server(v_.last_server);
+        remove_certificate(config_->device_id);
         dreadovania::forget_server(servers_, config_->server);
         save_servers(servers_);
         config_.reset();
+        apply_certificate();
         v_.seeds.clear();
         v_.loaded = false;
         pick_server();
@@ -877,6 +1028,7 @@ class App {
         v_.server_note.clear();
         if (!choice.index) {
             config_.reset();
+            apply_certificate();
             return;
         }
         std::size_t index = *choice.index;
@@ -886,6 +1038,7 @@ class App {
         }
         bool changed = !config_ || config_->server != servers_.servers[index].server;
         config_ = servers_.servers[index];
+        apply_certificate();
         if (changed) {
             v_.seeds.clear();
             v_.loaded = false;

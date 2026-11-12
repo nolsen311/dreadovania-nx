@@ -22,6 +22,12 @@ struct PairedServer {
     std::string token;                  // secret: never shown or logged
     std::vector<std::string> networks;  // network names linked to this server
     std::int64_t last_used = 0;         // a counter: higher is more recent
+    // This Switch's client certificate for the server (server ADR 0023). The .p12 is
+    // in certificate_file(device_id); its password is as secret as the token.
+    std::string cert_password;
+    std::string cert_sha256;
+    std::string cert_not_after;
+    std::string cert_renew_after;
 };
 
 struct ServerList {

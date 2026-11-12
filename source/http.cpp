@@ -62,7 +62,8 @@ std::string switch_time_utc() {
     return text;
 }
 
-std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca) {
+std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca,
+                     bool has_certificate) {
     switch (code) {
         case CURLE_COULDNT_RESOLVE_HOST:
             return "the server's name couldn't be found: check the address, and that the "
@@ -78,7 +79,11 @@ std::string describe(CURLcode code, const char* detail, dreadovania::UserCa ca) 
             return dreadovania::untrusted_certificate_message(detail, ca, switch_time_utc());
         case CURLE_SSL_CONNECT_ERROR:
             return std::string("the secure connection failed (") + detail +
-                   "): the server must offer TLS 1.2 or newer";
+                   (has_certificate
+                        ? "): the server must offer TLS 1.2 or newer, and accept this "
+                          "Switch's certificate (if it was revoked, pair again)"
+                        : "): the server must offer TLS 1.2 or newer. If it only lets in "
+                          "devices with a certificate, pair this Switch again");
         default:
             return std::string("the request failed (") +
                    (detail[0] != '\0' ? detail : curl_easy_strerror(code)) + ")";
@@ -140,6 +145,18 @@ void Http::shutdown() {
     ready_ = false;
 }
 
+void Http::use_client_certificate(const std::string& path, const std::string& password) {
+    if (path == cert_path_ && password == cert_password_) {
+        return;
+    }
+    cert_path_ = path;
+    cert_password_ = password;
+    if (handle_ != nullptr) {  // drop open connections made with the other certificate
+        curl_easy_cleanup(handle_);
+        handle_ = nullptr;
+    }
+}
+
 void Http::setup(const std::string& url, const char* method, curl_slist* headers, char* detail) {
     // One handle for the whole session: curl keeps the connection open between
     // requests, which saves a TLS handshake each time (ADR 0018).
@@ -162,6 +179,13 @@ void Http::setup(const std::string& url, const char* method, curl_slist* headers
         curl_easy_setopt(curl, CURLOPT_CAPATH, ca_dir_.c_str());
     }
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    if (!cert_path_.empty()) {
+        // libnx's TLS backend loads the identity from a PKCS#12 file into the
+        // Switch's ssl service (sslContextImportClientPki).
+        curl_easy_setopt(curl, CURLOPT_SSLCERT, cert_path_.c_str());
+        curl_easy_setopt(curl, CURLOPT_SSLCERTTYPE, "P12");
+        curl_easy_setopt(curl, CURLOPT_KEYPASSWD, cert_password_.c_str());
+    }
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);  // the API never redirects
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
@@ -204,7 +228,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
     } else if (sink.too_big) {
         response.error = "the server's answer was too large";
     } else {
-        response.error = describe(code, detail, user_ca_);
+        response.error = describe(code, detail, user_ca_, !cert_path_.empty());
     }
     curl_slist_free_all(list);
     return response;
@@ -267,7 +291,7 @@ Response Http::download(const std::string& url, const std::string& token,
     CURLcode code = curl_easy_perform(handle_);
     curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     if (code != CURLE_OK && !stream.stopped) {
-        response.error = describe(code, detail, user_ca_);
+        response.error = describe(code, detail, user_ca_, !cert_path_.empty());
     }
     response.body = std::move(stream.error_body);
     curl_slist_free_all(list);

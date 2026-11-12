@@ -53,6 +53,12 @@ std::optional<ServerList> parse_server_list(std::string_view text) {
         s.device_id = item.string_at("device_id").value_or("");
         s.name = item.string_at("name").value_or("");
         s.last_used = std::max<std::int64_t>(0, item.int_at("last_used").value_or(0));
+        if (const json::Value* cert = item.get("certificate"); cert && cert->is_object()) {
+            s.cert_password = cert->string_at("password").value_or("");
+            s.cert_sha256 = cert->string_at("sha256").value_or("");
+            s.cert_not_after = cert->string_at("not_after").value_or("");
+            s.cert_renew_after = cert->string_at("renew_after").value_or("");
+        }
         if (const json::Value* networks = item.get("networks"); networks && networks->is_array()) {
             for (const json::Value& n : networks->items()) {
                 if (n.is_string() && !n.as_string().empty()) {
@@ -77,7 +83,14 @@ std::string serialize_server_list(const ServerList& list) {
         for (std::size_t n = 0; n < s.networks.size(); ++n) {
             out += (n == 0 ? "" : ", ") + json::quote(s.networks[n]);
         }
-        out += "],\n      \"last_used\": " + std::to_string(s.last_used) + "\n    }";
+        out += "],\n      \"last_used\": " + std::to_string(s.last_used);
+        if (!s.cert_password.empty()) {
+            out += ",\n      \"certificate\": {\"password\": " + json::quote(s.cert_password) +
+                   ", \"sha256\": " + json::quote(s.cert_sha256) +
+                   ", \"not_after\": " + json::quote(s.cert_not_after) +
+                   ", \"renew_after\": " + json::quote(s.cert_renew_after) + "}";
+        }
+        out += "\n    }";
     }
     out += list.servers.empty() ? "]\n}\n" : "\n  ]\n}\n";
     return out;
@@ -85,7 +98,13 @@ std::string serialize_server_list(const ServerList& list) {
 
 ServerList server_list_from(const DeviceConfig& config) {
     ServerList list;
-    list.servers.push_back({config.server, config.device_id, config.name, config.token, {}, 1});
+    PairedServer s;
+    s.server = config.server;
+    s.device_id = config.device_id;
+    s.name = config.name;
+    s.token = config.token;
+    s.last_used = 1;
+    list.servers.push_back(std::move(s));
     return list;
 }
 

@@ -3,6 +3,8 @@
 // docs/openapi.json, ADR 0017), and its settings file on the SD card.
 #pragma once
 
+#include "dreadovania/certs.hpp"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -42,6 +44,10 @@ struct Paired {
     std::string device_id;
     std::string name;
     std::string token;
+    // For secure remote access (server ADR 0023): this Switch's certificate, and the
+    // server's main address (pairing may have been through its front-door address).
+    std::optional<ClientCertificate> certificate;
+    std::string server_url;
 };
 std::optional<Paired> parse_paired(std::string_view body);
 

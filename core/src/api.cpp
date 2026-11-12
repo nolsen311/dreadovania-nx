@@ -152,7 +152,12 @@ std::optional<Paired> parse_paired(std::string_view body) {
     if (!id || !token || token->empty()) {
         return std::nullopt;
     }
-    return Paired{*id, parsed.value->string_at("name").value_or(""), *token};
+    Paired paired{*id, parsed.value->string_at("name").value_or(""), *token, std::nullopt,
+                  parsed.value->string_at("server_url").value_or("")};
+    if (const json::Value* cert = parsed.value->get("certificate"); cert && cert->is_object()) {
+        paired.certificate = client_certificate_from(*cert);
+    }
+    return paired;
 }
 
 std::optional<std::vector<SeedSummary>> parse_seed_list(std::string_view body) {

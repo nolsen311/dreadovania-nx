@@ -30,6 +30,12 @@ class Http {
     void shutdown();
     dreadovania::UserCa user_ca() const { return user_ca_; }
 
+    // Present this client certificate (a PKCS#12 file and its password) on every
+    // connection from now on, or none with an empty path (server ADR 0023). A change
+    // starts a fresh connection, so one server's certificate never goes to another.
+    void use_client_certificate(const std::string& path, const std::string& password);
+    bool has_client_certificate() const { return !cert_path_.empty(); }
+
     Response request(std::string_view method, const std::string& url,
                      const std::string& body = "", const std::string& token = "");
 
@@ -48,6 +54,8 @@ class Http {
     std::string agent_;
     bool ready_ = false;
     std::string ca_dir_;
+    std::string cert_path_;
+    std::string cert_password_;  // secret: never shown or logged
     std::size_t user_ca_count_ = 0;
     dreadovania::UserCa user_ca_ = dreadovania::UserCa::Missing;
 };
