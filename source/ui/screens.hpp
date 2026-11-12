@@ -14,7 +14,7 @@
 
 namespace ui {
 
-enum class Screen { Pair, Library, Presets, Working, Servers };
+enum class Screen { Starting, Pair, Library, Presets, Working, Servers };
 enum class Dialog { None, Replace, Unpair };
 
 struct Work {
@@ -68,6 +68,11 @@ struct View {
     std::string toast;
     bool toast_bad = false;
     bool show_toast = false;
+
+    // Something is running that the user should wait for: shown with a spinner
+    // (on the Starting screen, or as a pill above the footer). "" when idle.
+    std::string busy;
+    unsigned busy_frame = 0;  // advances while waiting, to turn the spinner
 };
 
 // Layout shared with touch input.

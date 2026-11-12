@@ -213,6 +213,11 @@ using ui::kRowH;
 
 std::uint64_t now_ms() { return armTicksToNs(armGetSystemTick()) / 1'000'000; }
 
+// "dread.example.com:8443" for "https://dread.example.com:8443", for messages.
+std::string bare_origin(const std::string& origin) {
+    return origin.rfind("https://", 0) == 0 ? origin.substr(8) : origin;
+}
+
 class App {
   public:
     explicit App(std::string self_path) : self_path_(std::move(self_path)) {
@@ -227,7 +232,18 @@ class App {
         if (!error.empty()) {
             return error;
         }
-        net_error_ = http_.init();
+        // Something on screen at once: preparing the trusted certificates can take a
+        // few seconds the first time (ADRs 0013-0015).
+        v_.screen = Screen::Starting;
+        v_.busy = "Starting...";
+        render();
+        http_.set_wait_hook([this] { tick_busy(); });
+        net_error_ = http_.init([this](const std::string& step) {
+            v_.busy = step;
+            ++v_.busy_frame;
+            render();
+        });
+        v_.busy.clear();
         v_.applet_mode = !app::system_state().app_is_application;
         servers_ = load_servers();
         pick_server();
@@ -237,7 +253,41 @@ class App {
             render();  // something on screen while the list loads
             refresh();
         }
+        render();
         return "";
+    }
+
+    // Shows what's running, with a spinner, until it goes out of scope.
+    class Busy {
+      public:
+        Busy(App& app, std::string text) : app_(app), previous_(app.v_.busy) {
+            app_.v_.busy = std::move(text);
+            app_.render();
+        }
+        ~Busy() {
+            app_.v_.busy = previous_;
+            app_.render();
+        }
+        Busy(const Busy&) = delete;
+        Busy& operator=(const Busy&) = delete;
+
+      private:
+        App& app_;
+        std::string previous_;
+    };
+
+    // While a request waits: turn the spinner, at most ten times a second.
+    void tick_busy() {
+        if (v_.busy.empty() && v_.screen != Screen::Working) {
+            return;
+        }
+        std::uint64_t now = now_ms();
+        if (now - last_tick_ < 100) {
+            return;
+        }
+        last_tick_ = now;
+        ++v_.busy_frame;
+        render();
     }
 
     // One frame. Returns false to exit.
@@ -265,6 +315,7 @@ class App {
                     servers_step(down);
                     break;
                 case Screen::Working:
+                case Screen::Starting:
                     break;
             }
         }
@@ -298,6 +349,7 @@ class App {
     ui::View v_;                 // everything the screens show
     std::string overwrite_for_;  // seed the user agreed to install over other mods' files
     std::uint64_t toast_until_ = 0;
+    std::uint64_t last_tick_ = 0;  // when the spinner last turned
 
     // ---- messages ---------------------------------------------------------------------
 
@@ -626,7 +678,11 @@ class App {
             say(net_error_, true);
             return;
         }
-        app::Response r = http_.request("GET", url("/api/v1/presets"), "", config_->token);
+        app::Response r;
+        {
+            Busy busy(*this, "Loading presets...");
+            r = http_.request("GET", url("/api/v1/presets"), "", config_->token);
+        }
         auto presets = r.status == 200 ? dreadovania::parse_preset_list(r.body) : std::nullopt;
         if (!presets) {
             say("Couldn't load presets: " + explain(r, "unexpected answer"), true);
@@ -675,13 +731,15 @@ class App {
             return;
         }
         v_.typed_code = *code;
-        say("Pairing...", false);
-        render();
         // No certificate for pairing: it may be through the server's front door, and
         // another server's certificate is no use here.
         http_.use_client_certificate("", "");
-        app::Response r = http_.request("POST", *server.origin + "/api/v1/devices/pair",
-                                        dreadovania::pair_request_body(*code, console_nickname()));
+        app::Response r;
+        {
+            Busy busy(*this, "Pairing with " + bare_origin(*server.origin) + "...");
+            r = http_.request("POST", *server.origin + "/api/v1/devices/pair",
+                              dreadovania::pair_request_body(*code, console_nickname()));
+        }
         auto paired = r.status == 201 ? dreadovania::parse_paired(r.body) : std::nullopt;
         if (!paired) {
             apply_certificate();
@@ -739,6 +797,7 @@ class App {
                 return;
             }
         }
+        Busy busy(*this, "Loading seeds from " + bare_origin(config_->server) + "...");
         app::Response r = http_.request("GET", url("/api/v1/seeds?limit=50"), "", config_->token);
         if (r.status == 401) {
             std::string removed = config_->server;
@@ -784,9 +843,12 @@ class App {
 
     // The "Check for updates" button: ask now, and say what was found.
     void check_for_update_now() {
-        say("Checking for updates...", false);
-        render();
-        if (!check_for_update(true)) {
+        bool found;
+        {
+            Busy busy(*this, "Checking for updates...");
+            found = check_for_update(true);
+        }
+        if (!found) {
             say("The server didn't say whether there's an update. It may be too old to "
                 "offer app updates.", true);
         } else if (!v_.update_version.empty()) {
@@ -826,7 +888,10 @@ class App {
 
     void unpair() {
         // Tell the server first; forget the token here whatever it answers.
-        http_.request("DELETE", url("/api/v1/devices/me"), "", config_->token);
+        {
+            Busy busy(*this, "Unpairing...");
+            http_.request("DELETE", url("/api/v1/devices/me"), "", config_->token);
+        }
         std::string removed = config_->server;
         if (drop_current()) {
             say("Unpaired from " + removed + ".", false);
@@ -855,6 +920,7 @@ class App {
             return;
         }
         renewal_checked_.insert(config_->server);
+        Busy busy(*this, "Checking this Switch's certificate...");
         app::Response me = http_.request("GET", url("/api/v1/devices/me"), "", config_->token);
         if (me.status != 200) {
             return;
@@ -987,6 +1053,7 @@ class App {
             if (s.server == origin) {
                 auto [path, password] = certificate_for(s);  // its own, just for this
                 http_.use_client_certificate(path, password);
+                Busy busy(*this, "Unpairing from " + bare_origin(s.server) + "...");
                 http_.request("DELETE", s.server + "/api/v1/devices/me", "", s.token);
                 remove_certificate(s.device_id);
             }
