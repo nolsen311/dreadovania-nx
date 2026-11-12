@@ -5,6 +5,7 @@
 #include <switch.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <ctime>
@@ -27,8 +28,16 @@ constexpr const char* kUserCaDir = "sdmc:/config/dreadovania/trusted";
 // file, for servers the Switch's own roots don't cover (ADR 0013). The stamp is
 // kept outside the folder: the TLS backend imports every file in it.
 constexpr const char* kBundledRoots = "romfs:/cacert.pem";
+// One folder per batch of at most kRootsPerBatch roots, plus the user's CA: the
+// TLS service refuses to import more than about 70 into a connection (ADR 0014).
 constexpr const char* kPublicCaDir = "sdmc:/config/dreadovania/trusted-public";
 constexpr const char* kPublicCaStamp = "sdmc:/config/dreadovania/trusted-public.stamp";
+constexpr std::size_t kRootsPerBatch = 32;
+constexpr std::size_t kMaxBatchFolders = 16;  // folders of an older batch size are cleared too
+
+std::string batch_folder(std::size_t i) {
+    return std::string(kPublicCaDir) + "-" + std::to_string(i);
+}
 constexpr std::size_t kMaxBody = 4 * 1024 * 1024;
 
 bool read_file(const char* path, std::string& out) {
@@ -160,21 +169,24 @@ std::string Http::init() {
 }
 
 void Http::prepare_public_roots(const std::vector<std::string>& user_certs) {
-    // Mozilla's roots then the user's CA, rewritten only when either changes, so
-    // the SD card isn't written ~120 files at every start (ADR 0013).
+    // Mozilla's roots in batches, each with the user's CA, rewritten only when the
+    // bundle or ca.pem changes, so the SD card isn't written ~120 files at every
+    // start (ADRs 0013 and 0014).
     std::string bundle;
     bool read = R_SUCCEEDED(romfsInit());
     if (read) {
         read = read_file(kBundledRoots, bundle);
         romfsExit();
     }
-    std::vector<std::string> roots =
-        read ? dreadovania::split_pem_certificates(bundle) : std::vector<std::string>{};
-    if (roots.empty()) {
+    std::vector<std::vector<std::string>> batches =
+        read ? dreadovania::root_batches(bundle, kRootsPerBatch)
+             : std::vector<std::vector<std::string>>{};
+    if (batches.empty() || batches.size() > kMaxBatchFolders) {
         return;  // no bundle: the Switch's roots and the user's CA only
     }
     dreadovania::Sha256 hash;
     hash.update(bundle);
+    hash.update("\n--batch--\n" + std::to_string(kRootsPerBatch));
     for (const std::string& cert : user_certs) {
         hash.update("\n--user--\n");
         hash.update(cert);
@@ -182,40 +194,62 @@ void Http::prepare_public_roots(const std::vector<std::string>& user_certs) {
     std::string stamp = hash.hex();
     std::string written;
     if (!read_file(kPublicCaStamp, written) || written != stamp) {
-        std::remove(kPublicCaStamp);  // half-written folder: not used until finished
-        mkdir(kPublicCaDir, 0777);
-        clear_folder(kPublicCaDir);
-        for (std::size_t i = 0; i < roots.size(); ++i) {
-            std::string path = std::string(kPublicCaDir) + "/mozilla-" + std::to_string(i) + ".pem";
-            if (!write_file(path, roots[i])) {
-                return;
+        std::remove(kPublicCaStamp);  // half-written folders: not used until finished
+        clear_folder(kPublicCaDir);   // 0.8.0's single folder, which was too big
+        rmdir(kPublicCaDir);
+        for (std::size_t i = 0; i < kMaxBatchFolders; ++i) {
+            clear_folder(batch_folder(i).c_str());
+            if (i >= batches.size()) {
+                rmdir(batch_folder(i).c_str());
             }
         }
-        for (std::size_t i = 0; i < user_certs.size(); ++i) {
-            std::string path = std::string(kPublicCaDir) + "/ca-" + std::to_string(i) + ".pem";
-            if (!write_file(path, user_certs[i])) {
-                return;
+        for (std::size_t i = 0; i < batches.size(); ++i) {
+            std::string folder = batch_folder(i);
+            mkdir(folder.c_str(), 0777);
+            for (std::size_t k = 0; k < batches[i].size(); ++k) {
+                if (!write_file(folder + "/mozilla-" + std::to_string(k) + ".pem", batches[i][k])) {
+                    return;
+                }
+            }
+            for (std::size_t k = 0; k < user_certs.size(); ++k) {
+                if (!write_file(folder + "/ca-" + std::to_string(k) + ".pem", user_certs[k])) {
+                    return;
+                }
             }
         }
         if (!write_file(kPublicCaStamp, stamp)) {
             return;
         }
     }
-    public_ca_dir_ = kPublicCaDir;
-    public_root_count_ = roots.size();
+    for (std::size_t i = 0; i < batches.size(); ++i) {
+        public_ca_dirs_.push_back(batch_folder(i));
+        public_root_count_ += batches[i].size();
+    }
+}
+
+const std::string& Http::ca_folder_for(const std::string& url) const {
+    auto it = public_batch_.find(dreadovania::origin_of(url));
+    return it != public_batch_.end() ? public_ca_dirs_[it->second] : ca_dir_;
 }
 
 bool Http::with_public_roots(const std::string& url) const {
-    return public_origins_.count(dreadovania::origin_of(url)) != 0;
+    return public_batch_.count(dreadovania::origin_of(url)) != 0;
 }
 
-bool Http::retry_with_public_roots(const std::string& url) {
-    // Only once per server, and only if there are roots to add (ADR 0013).
+bool Http::next_public_batch(const std::string& url) {
+    // After the Switch's roots and the user's CA, each batch of Mozilla's roots in
+    // turn; the one that works is remembered for the server (ADR 0014).
     std::string origin = dreadovania::origin_of(url);
-    if (public_ca_dir_.empty() || origin.empty() || public_origins_.count(origin) != 0) {
+    if (public_ca_dirs_.empty() || origin.empty()) {
         return false;
     }
-    public_origins_.insert(origin);
+    auto it = public_batch_.find(origin);
+    std::size_t next = it == public_batch_.end() ? 0 : it->second + 1;
+    if (next >= public_ca_dirs_.size()) {
+        public_batch_.erase(origin);  // none helped: start plainly next time
+        return false;
+    }
+    public_batch_[origin] = next;
     return true;
 }
 
@@ -260,7 +294,7 @@ void Http::setup(const std::string& url, const char* method, curl_slist* headers
     // No CA file: the Switch's trusted roots, plus the user's CA if there is one,
     // plus Mozilla's roots for a server that needed them (ADR 0013).
     curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
-    const std::string& folder = with_public_roots(url) ? public_ca_dir_ : ca_dir_;
+    const std::string& folder = ca_folder_for(url);
     if (!folder.empty()) {
         curl_easy_setopt(curl, CURLOPT_CAPATH, folder.c_str());
     }
@@ -318,10 +352,7 @@ Response Http::request(std::string_view method, const std::string& url, const st
             curl_easy_setopt(handle_, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
         }
         code = curl_easy_perform(handle_);
-    } while (untrusted(code) && !retried && retry_with_public_roots(url));
-    if (untrusted(code) && retried) {
-        public_origins_.erase(dreadovania::origin_of(url));  // didn't help: try plainly again
-    }
+    } while (untrusted(code) && next_public_batch(url));
     if (code == CURLE_OK) {
         curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     } else if (sink.too_big) {
@@ -399,11 +430,7 @@ Response Http::download(const std::string& url, const std::string& token,
         curl_easy_setopt(handle_, CURLOPT_WRITEFUNCTION, on_stream);
         curl_easy_setopt(handle_, CURLOPT_WRITEDATA, &stream);
         code = curl_easy_perform(handle_);
-    } while (untrusted(code) && stream.received == 0 && !retried &&
-             retry_with_public_roots(url));
-    if (untrusted(code) && retried) {
-        public_origins_.erase(dreadovania::origin_of(url));
-    }
+    } while (untrusted(code) && stream.received == 0 && next_public_batch(url));
     curl_easy_getinfo(handle_, CURLINFO_RESPONSE_CODE, &response.status);
     if (code != CURLE_OK && !stream.stopped) {
         response.error = describe(code, detail, user_ca_, !cert_path_.empty(),

@@ -22,7 +22,8 @@ add_executable(core_tests main.cpp test_paths.cpp test_json.cpp test_api.cpp tes
 target_include_directories(core_tests PRIVATE fake ../source)
 target_link_libraries(core_tests PRIVATE dreadovania_core)
 target_compile_options(core_tests PRIVATE ${WARNINGS} ${SANITIZE})
-target_compile_definitions(core_tests PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_compile_definitions(core_tests PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+                           ROOTS_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../romfs/cacert.pem")
 target_link_options(core_tests PRIVATE ${SANITIZE})
 
 enable_testing()

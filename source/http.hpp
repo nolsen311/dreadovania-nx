@@ -8,7 +8,7 @@
 
 #include <cstdint>
 #include <functional>
-#include <set>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,13 +47,14 @@ class Http {
                       const std::function<bool(const char*, std::size_t)>& on_data,
                       const std::function<void(std::uint64_t)>& on_progress);
 
-    // How many of Mozilla's roots are ready as a second step (ADR 0013), or 0.
+    // How many of Mozilla's roots are ready as a second step (ADRs 0013, 0014), or 0.
     std::size_t public_root_count() const { return public_root_count_; }
 
   private:
     void prepare_public_roots(const std::vector<std::string>& user_certs);
+    const std::string& ca_folder_for(const std::string& url) const;
     bool with_public_roots(const std::string& url) const;
-    bool retry_with_public_roots(const std::string& url);
+    bool next_public_batch(const std::string& url);
     void setup(const std::string& url, const char* method, ::curl_slist* headers,
                char* detail);
     static ::curl_slist* headers(const std::string& token, bool json_body);
@@ -65,9 +66,9 @@ class Http {
     std::string cert_path_;
     std::string cert_password_;  // secret: never shown or logged
     std::size_t user_ca_count_ = 0;
-    std::string public_ca_dir_;              // "" without the bundle
+    std::vector<std::string> public_ca_dirs_;  // one per batch; empty without the bundle
     std::size_t public_root_count_ = 0;
-    std::set<std::string> public_origins_;  // servers that needed Mozilla's roots
+    std::map<std::string, std::size_t> public_batch_;  // server origin -> batch it needed
     dreadovania::UserCa user_ca_ = dreadovania::UserCa::Missing;
 };
 

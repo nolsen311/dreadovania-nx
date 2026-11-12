@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Responses are shaped like dreadovania-server's (docs/openapi.json).
+#include <fstream>
+#include <iterator>
 #include <string>
 
 #include "check.hpp"
@@ -209,6 +211,63 @@ TEST(untrusted_after_mozilla_roots_says_so) {
     CHECK(both.find("by the Switch or by Mozilla's public roots") != std::string::npos);
     CHECK(untrusted_certificate_message("", UserCa::Missing, "").find("Mozilla") ==
           std::string::npos);
+}
+
+namespace {
+
+std::string labelled(const std::string& label, const std::string& body) {
+    return "\n# Issuer: CN=" + label + "\n# Label: \"" + label + "\"\n# Serial: 1\n" +
+           "-----BEGIN CERTIFICATE-----\n" + body + "\n-----END CERTIFICATE-----\n";
+}
+
+}  // namespace
+
+TEST(roots_come_in_batches_most_used_first) {
+    std::string bundle = labelled("Old Root A", "AAA") + labelled("ISRG Root X2", "X2") +
+                         labelled("Old Root B", "BBB") + labelled("ISRG Root X1", "X1") +
+                         "-----BEGIN CERTIFICATE-----\nNOLABEL\n-----END CERTIFICATE-----\n" +
+                         labelled("Old Root C", "CCC") + "-----BEGIN CERTIFICATE-----\ncut";
+    auto batches = root_batches(bundle, 2);
+    CHECK(batches.size() == 3);  // 6 complete certificates, the truncated one ignored
+    // X1 then X2 (the priority order), then the rest in the bundle's order.
+    CHECK(batches[0][0].find("X1") != std::string::npos);
+    CHECK(batches[0][1].find("X2") != std::string::npos);
+    CHECK(batches[1][0].find("AAA") != std::string::npos);
+    CHECK(batches[1][1].find("BBB") != std::string::npos);
+    CHECK(batches[2][0].find("NOLABEL") != std::string::npos);
+    CHECK(batches[2][1].find("CCC") != std::string::npos);
+    CHECK(batches[0][0].rfind("-----BEGIN CERTIFICATE-----", 0) == 0);
+    CHECK(batches[2][1].find("-----END CERTIFICATE-----") != std::string::npos);
+    CHECK(root_batches(bundle, 0).empty());
+    CHECK(root_batches("", 32).empty());
+}
+
+TEST(the_bundled_roots_fit_the_batches) {
+    std::ifstream in(ROOTS_FILE, std::ios::binary);
+    std::string bundle((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(!bundle.empty());
+    auto batches = root_batches(bundle, 32);
+    std::size_t total = 0;
+    for (const auto& batch : batches) {
+        CHECK(!batch.empty() && batch.size() <= 32);
+        total += batch.size();
+    }
+    CHECK(total == split_pem_certificates(bundle).size());  // none lost or doubled
+    // Every priority root is still in the bundle and lands in the first batch. If a
+    // certifi update renames or drops one, this fails: update kPriorityRoots.
+    CHECK(priority_root_labels().size() <= 32);  // they all fit the first batch
+    for (std::string_view label : priority_root_labels()) {
+        std::size_t at = bundle.find("# Label: \"" + std::string(label) + "\"\n");
+        CHECK(at != std::string::npos);
+        std::size_t begin = bundle.find("-----BEGIN CERTIFICATE-----", at);
+        std::size_t end = bundle.find("-----END CERTIFICATE-----", begin);
+        std::string pem = bundle.substr(begin, end + 25 - begin);
+        bool first = false;
+        for (const auto& cert : batches[0]) {
+            first = first || cert == pem;
+        }
+        CHECK(first);
+    }
 }
 
 TEST(origins_of_urls) {
