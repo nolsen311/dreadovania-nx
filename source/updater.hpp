@@ -26,6 +26,7 @@ bool updatable_path(const std::string& path);
 
 UpdateResult download_update(Http& http, const std::string& server, const std::string& token,
                              const dreadovania::AppLatest& latest, const std::string& self_path,
-                             const std::function<void(double)>& progress);
+                             const std::function<void(double)>& progress,
+                             const std::function<void()>& on_replace = {});
 
 }  // namespace app

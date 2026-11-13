@@ -128,7 +128,16 @@ int main(int argc, char** argv) {
     updating.work.steps = {"Download and check", "Replace the app", "Restart"};
     updating.work.fraction = 0.4;
     updating.work.detail = "";
+    updating.work.app_update = true;
     shot("11-updating", updating);
+    updating.work.current = 2;  // checked and replaced: restarting
+    updating.work.fraction = 1;
+    shot("11b-updating-restart", updating);
+
+    ui::View loading = library();
+    loading.loaded = false;
+    loading.seeds.clear();
+    shot("1b-library-loading", loading);
 
     ui::View unpaired;
     shot("8-first-run", unpaired);

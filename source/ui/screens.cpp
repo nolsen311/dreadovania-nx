@@ -37,7 +37,12 @@ static int draw_aside_installed(Gfx& g, const View& v) {
     const int w = kAsideW - 48;
     auto it = std::find_if(v.seeds.begin(), v.seeds.end(),
                            [&](const dreadovania::SeedSummary& s) { return s.id == v.installed; });
-    if (v.installed.empty() || it == v.seeds.end()) {
+    if (!v.loaded) {  // the list decides what the installed seed is: don't guess yet
+        g.framed(x, y, w, 64, 14, 1, color::line, color::panel);
+        g.text("Loading...", x + 18, y + 20, ui::kSmall, color::muted, false, ui::Align::Left,
+               w - 36);
+        y += 64 + 16;
+    } else if (v.installed.empty() || it == v.seeds.end()) {
         g.framed(x, y, w, 96, 14, 1, color::line, color::panel);
         g.text(v.installed.empty() ? "No seed installed" : "A seed not on this server",
                   x + 18, y + 18, ui::kSmall, color::muted, false, ui::Align::Left, w - 36);
@@ -298,6 +303,12 @@ static void draw_working(Gfx& g, const View& v) {
     if (v.work.fraction >= 0) {
         ui::progress_bar(g, x, y, w, v.work.fraction);
         y += 34;
+    }
+    if (v.work.app_update) {
+        g.text("The download is checked before it replaces this version.", x, y, ui::kSmall,
+               color::muted);
+        ui::footer(g, "Keep the app open: it restarts by itself", {});
+        return;
     }
     g.text(v.work.current >= 2 ? "Every file is checked before anything on the SD card changes."
                                  : "The server keeps working even if you stop waiting.",
