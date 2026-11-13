@@ -113,6 +113,15 @@ int main(int argc, char** argv) {
     update.applet_mode = true;
     shot("10b-update-in-applet-mode", update);
 
+    // A long address beside a lit version chip: the address gives way.
+    ui::View crowded = library();
+    crowded.server = "https://dreadovania-pairing.a-rather-long-home-domain.example.com:58080";
+    crowded.update_version = "0.10.12";
+    shot("10c-update-long-address", crowded);
+    crowded.update_version.clear();
+    crowded.update_required = true;
+    shot("10d-update-required", crowded);
+
     ui::View updating = library();
     updating.screen = ui::Screen::Working;
     updating.work.title = "Updating the app to 0.4.3";

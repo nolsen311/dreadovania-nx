@@ -38,15 +38,37 @@ void logo(Gfx& g, int x, int y, int size) {
            size / 2, color::fg, true, Align::Center);
 }
 
-void header(Gfx& g, const std::string& right, bool connected, const std::string& button) {
+void header(Gfx& g, const std::string& right, bool connected, const std::string& button,
+            const VersionChip& version) {
     logo(g, 32, 16, 40);
-    g.text("Dreadovania", 88, 20, 26, color::fg, true);
+    int title_w = g.text("Dreadovania", 88, 20, 26, color::fg, true);
+    int taken = 88 + title_w;  // the right edge of what's drawn on the left
+    if (!version.text.empty()) {
+        // A pill like the server's: the version, then the button that acts on it.
+        bool lit = version.state != VersionChip::State::Current;
+        Color tone = version.state == VersionChip::State::Required ? color::bad : color::accent;
+        int tw = g.measure(version.text, kSmall, lit);
+        int gw = version.button.empty() ? 0 : glyph_width(g, version.button);
+        int pill_w = 16 + tw + (gw ? 10 + gw + 10 : 16);
+        int px = 88 + title_w + 16;
+        g.framed(px, 18, pill_w, 36, 18, lit ? 2 : 1, lit ? tone : color::line, color::panel);
+        g.text(version.text, px + 16, g.top_for_center(36, kSmall, lit), kSmall,
+               lit ? tone : color::muted, lit);
+        if (gw) {
+            glyph(g, px + 16 + tw + 10, 36, version.button);
+        }
+        taken = px + pill_w;
+    }
     int end = Gfx::kWidth - 32;
+    // The address gives way to the version chip: at most 560 px, and never closer
+    // than 24 px to it (the server pill's button, padding and dot come off too).
+    const int around = button.empty() ? 0 : 12 + glyph_width(g, button) + 12 + 21 + 16;
+    const int max_tw = std::max(80, std::min(560, end - around - (taken + 24)));
     if (!button.empty()) {
         // A pill around the status, address and button: the whole thing reads as
         // one control, "press L to change the server".
         int gw = glyph_width(g, button);
-        int tw = std::min(g.measure(right, kSmall), 560);
+        int tw = std::min(g.measure(right, kSmall), max_tw);
         // The pill's ends are round (radius 22): the button sits far enough in
         // to clear the curve, and the dot (or text) as far in from the left.
         const int inset = 12, dot = connected ? 21 : 0, left = connected ? 16 : 18;
@@ -55,7 +77,7 @@ void header(Gfx& g, const std::string& right, bool connected, const std::string&
         glyph(g, end - inset - gw, 36, button);
         end -= inset + gw + 12;
     }
-    int w = g.text(right, end, 25, kSmall, color::muted, false, Align::Right, 560);
+    int w = g.text(right, end, 25, kSmall, color::muted, false, Align::Right, max_tw);
     if (connected && w > 0) {
         g.circle(end - w - 16, 36, 5, color::ok);
     }

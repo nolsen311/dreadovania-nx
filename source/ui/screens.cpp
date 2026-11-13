@@ -3,6 +3,7 @@
 
 #include <algorithm>
 
+#include "dreadovania/version.hpp"
 #include "ui/widgets.hpp"
 
 namespace ui {
@@ -89,26 +90,8 @@ static int draw_aside_installed(Gfx& g, const View& v) {
     return y + h;
 }
 
-static void draw_update_card(Gfx& g, const View& v, int below) {
-    if (v.update_version.empty() && !v.update_required) {
-        return;
-    }
-    const int x = 24;
-    const int w = kAsideW - 48;
-    const int h = 84;
-    // At the bottom of the column, or under the cards above if they reach that far.
-    const int y = std::max(below + 16, Gfx::kHeight - kFooter - 20 - h);
-    Color edge = v.update_required ? color::bad : color::accent;
-    g.framed(x, y, w, h, 14, 2, edge, color::panel);
-    std::string title = v.update_required ? "Update required" : "Update available";
-    g.text(title, x + 18, y + 16, ui::kBody, edge, true);
-    std::string line = v.update_version.empty() ? "Too old for this server: press -"
-                                                : v.update_version + " is ready: press -";
-    g.text(line, x + 18, y + 48, ui::kSmall, color::fg, false, ui::Align::Left, w - 36);
-}
-
 static void draw_library(Gfx& g, const View& v) {
-    draw_update_card(g, v, draw_aside_installed(g, v));
+    draw_aside_installed(g, v);
     g.box(kAsideW, ui::kHeader, 1, ui::Gfx::kHeight - ui::kHeader - ui::kFooter, 0,
              color::line);
     const int x = kAsideW + 32;
@@ -138,14 +121,8 @@ static void draw_library(Gfx& g, const View& v) {
     if (!v.server_note.empty()) {
         count += "  ·  " + v.server_note;
     }
-    std::vector<ui::Hint> hints = {{"A", "Install"}, {"R", "New seed"}, {"Y", "Refresh"},
-                                   {"+", "Exit"}};
-    if (!v.update_version.empty() || v.update_required) {
-        hints.insert(hints.begin(), {"-", "Update"});
-    } else {
-        hints.insert(hints.end() - 1, {"ZL", "Updates"});
-    }
-    ui::footer(g, count, hints);
+    // Updates: the version chip in the header, with its button (- or ZL).
+    ui::footer(g, count, {{"A", "Install"}, {"R", "New seed"}, {"Y", "Refresh"}, {"+", "Exit"}});
 }
 
 static void draw_presets(Gfx& g, const View& v) {
@@ -433,7 +410,21 @@ void draw(Gfx& g, const View& v) {
     }
     // L, next to the server it changes, opens the Servers screen (ADR 0010).
     bool servers_button = v.screen == Screen::Library && v.dialog == Dialog::None;
-    ui::header(g, right, v.connected, servers_button ? "L" : "");
+    // The version, always; lit when an update is ready, with - (update) or ZL
+    // (check now) where the Library screen takes them.
+    ui::VersionChip version;
+    version.text = "v" + std::string(dreadovania::kVersion);
+    if (v.update_required) {
+        version.state = ui::VersionChip::State::Required;
+        version.text += "  ·  update required";
+    } else if (!v.update_version.empty()) {
+        version.state = ui::VersionChip::State::Available;
+        version.text += "  ·  " + v.update_version + " ready";
+    }
+    if (servers_button) {
+        version.button = version.state == ui::VersionChip::State::Current ? "ZL" : "-";
+    }
+    ui::header(g, right, v.connected, servers_button ? "L" : "", version);
     switch (v.screen) {
         case Screen::Starting:
             draw_starting(g, v);
