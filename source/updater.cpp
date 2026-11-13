@@ -28,7 +28,8 @@ bool updatable_path(const std::string& path) {
 
 UpdateResult download_update(Http& http, const std::string& server, const std::string& token,
                              const dreadovania::AppLatest& latest, const std::string& self_path,
-                             const std::function<void(double)>& progress) {
+                             const std::function<void(double)>& progress,
+                             const std::function<void()>& on_replace) {
     UpdateResult result;
     if (!updatable_path(self_path)) {
         result.message = "This copy of the app can't update itself. Download " + latest.version +
@@ -84,6 +85,9 @@ UpdateResult download_update(Http& http, const std::string& server, const std::s
     }
     if (hash.hex() != latest.sha256) {
         return fail("the download didn't match its checksum");
+    }
+    if (on_replace) {
+        on_replace();  // checked: the screen moves on to "Replace the app"
     }
     // Swap: keep the old file until the new one is in place.
     std::remove(old.c_str());

@@ -863,18 +863,27 @@ class App {
     void update_app() {
         begin_work("Updating the app to " + latest_.version, 0);
         v_.work.steps = {"Download and check", "Replace the app", "Restart"};
+        v_.work.app_update = true;
         render();
         app::UpdateResult result = app::download_update(
-            http_, config_->server, config_->token, latest_, self_path_, [this](double f) {
+            http_, config_->server, config_->token, latest_, self_path_,
+            [this](double f) {
                 v_.work.fraction = f;
                 render();
-            });
+            },
+            [this] { step_to(1); });
         if (!result.ok) {
             v_.screen = Screen::Library;
             say(result.message, true);
             return;
         }
         step_to(2);
+        // Let "Restart" be seen before the screen goes dark (about a second).
+        for (int i = 0; i < 12; ++i) {
+            ++v_.busy_frame;  // keep the spinner turning
+            render();
+            svcSleepThread(80'000'000LL);
+        }
         // Ask the Homebrew Menu to start the new version when this one exits.
         if (R_SUCCEEDED(envSetNextLoad(self_path_.c_str(), self_path_.c_str()))) {
             quitting_ = true;
