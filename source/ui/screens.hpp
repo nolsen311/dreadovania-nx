@@ -24,6 +24,7 @@ struct Work {
     std::string detail;  // the server's progress line, or the download size
     std::string seed_hash;
     double fraction = -1;  // the download's progress, or -1
+    bool app_update = false;  // updating the app itself: nothing on the server, no B
 };
 
 // One paired server, for the Servers screen (ADR 0010).
