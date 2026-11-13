@@ -37,9 +37,18 @@ Color tone_color(dreadovania::Tone tone);
 using Hint = std::pair<std::string, std::string>;  // button, what it does
 
 void logo(Gfx& g, int x, int y, int size);
+// The app's version, next to the title. Highlighted when an update is ready
+// (or required), with the button that acts on it.
+struct VersionChip {
+    enum class State { Current, Available, Required };
+    std::string text;    // "v0.8.2", or "v0.8.2  ·  0.8.3 ready"; "" draws nothing
+    State state = State::Current;
+    std::string button;  // "-" to update, "ZL" to check; "" for none
+};
 // The top bar. ``button``, if given, is drawn after the server address: the
 // button that changes it (L opens the Servers screen, ADR 0010).
-void header(Gfx& g, const std::string& right, bool connected, const std::string& button = "");
+void header(Gfx& g, const std::string& right, bool connected, const std::string& button = "",
+            const VersionChip& version = {});
 void footer(Gfx& g, const std::string& left, const std::vector<Hint>& hints);
 // A controller button's letter in a circle (or a pill for wider labels). Returns its width.
 // A controller button: a circle for A, B, X, Y, + and -; the shape of a
